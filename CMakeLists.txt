@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 4.0)
 # specify cross-compilers and tools
 set(CMAKE_C_COMPILER arm-none-eabi-gcc)
 set(CMAKE_CXX_COMPILER arm-none-eabi-g++)
-set(CMAKE_ASM_COMPILER  arm-none-eabi-gcc)
+set(CMAKE_ASM_COMPILER arm-none-eabi-gcc)
 set(CMAKE_AR arm-none-eabi-ar)
 set(CMAKE_OBJCOPY arm-none-eabi-objcopy)
 set(CMAKE_OBJDUMP arm-none-eabi-objdump)
@@ -49,11 +49,51 @@ else ()
     add_compile_options(-Og -g)
 endif ()
 
-include_directories(Core/Inc FATFS/Target FATFS/App LWIP/App LWIP/Target Middlewares/Third_Party/LwIP/src/include Middlewares/Third_Party/LwIP/system Drivers/STM32H7xx_HAL_Driver/Inc Drivers/STM32H7xx_HAL_Driver/Inc/Legacy Middlewares/Third_Party/FreeRTOS/Source/include Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM7 Middlewares/Third_Party/FatFs/src Drivers/BSP/Components/lan8742 Middlewares/Third_Party/LwIP/src/include/netif/ppp Drivers/CMSIS/Device/ST/STM32H7xx/Include Middlewares/Third_Party/LwIP/src/include/lwip Middlewares/Third_Party/LwIP/src/include/lwip/apps Middlewares/Third_Party/LwIP/src/include/lwip/priv Middlewares/Third_Party/LwIP/src/include/lwip/prot Middlewares/Third_Party/LwIP/src/include/netif Middlewares/Third_Party/LwIP/src/include/compat/posix Middlewares/Third_Party/LwIP/src/include/compat/posix/arpa Middlewares/Third_Party/LwIP/src/include/compat/posix/net Middlewares/Third_Party/LwIP/src/include/compat/posix/sys Middlewares/Third_Party/LwIP/src/include/compat/stdc Middlewares/Third_Party/LwIP/system/arch Drivers/CMSIS/Include)
+include_directories(
+        Core/Inc FATFS/Target
+        FATFS/App
+        LWIP/App
+        LWIP/Target
+        Middlewares/Third_Party/LwIP/src/include
+        Middlewares/Third_Party/LwIP/system
+        Drivers/STM32H7xx_HAL_Driver/Inc
+        Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
+        Middlewares/Third_Party/FreeRTOS/Source/include
+        Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+        Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM7
+        Middlewares/Third_Party/FatFs/src Drivers/BSP/Components/lan8742
+        Middlewares/Third_Party/LwIP/src/include/netif/ppp
+        Drivers/CMSIS/Device/ST/STM32H7xx/Include
+        Middlewares/Third_Party/LwIP/src/include/lwip
+        Middlewares/Third_Party/LwIP/src/include/lwip/apps
+        Middlewares/Third_Party/LwIP/src/include/lwip/priv
+        Middlewares/Third_Party/LwIP/src/include/lwip/prot
+        Middlewares/Third_Party/LwIP/src/include/netif
+        Middlewares/Third_Party/LwIP/src/include/compat/posix
+        Middlewares/Third_Party/LwIP/src/include/compat/posix/arpa
+        Middlewares/Third_Party/LwIP/src/include/compat/posix/net
+        Middlewares/Third_Party/LwIP/src/include/compat/posix/sys
+        Middlewares/Third_Party/LwIP/src/include/compat/stdc
+        Middlewares/Third_Party/LwIP/system/arch
+        Drivers/CMSIS/Include
+        tinycbor/inc
+        PlcCore/Inc
+        USB_DEVICE/App
+        USB_DEVICE/Target
+        Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+        Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc)
 
 add_definitions(-DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H743xx)
 
-file(GLOB_RECURSE SOURCES "Core/*.*" "FATFS/*.*" "Middlewares/*.*" "LWIP/*.*" "Drivers/*.*")
+file(GLOB_RECURSE SOURCES
+        "Core/*.*"
+        "FATFS/*.*"
+        "Middlewares/*.*"
+        "LWIP/*.*"
+        "tinycbor/src/*.*"
+        "PlcCore/Src/*.*"
+        "Drivers/*.*"
+        "USB_DEVICE/*.*")
 
 set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32H743VITX_FLASH.ld)
 

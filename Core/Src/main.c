@@ -21,6 +21,11 @@
 #include "cmsis_os.h"
 #include "fatfs.h"
 #include "lwip.h"
+#include "usb_device.h"
+#include "plc.h"
+#include "logf.h"
+#include "usb_log.h"
+#include "uart3_cmd_handler.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -78,7 +83,11 @@ const osThreadAttr_t modbus_tcp_task_attributes = {
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* USER CODE BEGIN PV */
+#define ADC_CH_COUNT 4
 
+// Лучше в D2 SRAM, если используешь D-Cache:
+// GCC атрибут зависит от линкера, но минимум выровнять:
+__attribute__((aligned(32))) volatile uint32_t g_adcRaw[ADC_CH_COUNT];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -148,17 +157,53 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
-  MX_IWDG1_Init();
+//  MX_IWDG1_Init();
   MX_TIM6_Init();
-  MX_SDMMC1_SD_Init();
+//  MX_SDMMC1_SD_Init();
   MX_TIM1_Init();
   MX_TIM3_Init();
   MX_USART3_UART_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-
+  UsbLog_Init();
+  logf_set_level(LOG_LEVEL_DEBUG); // показывать всё
+  logf_set_enabled(true);          // включить логи
   /* USER CODE END 2 */
 
+  if (HAL_TIM_Base_Start(&htim6) != HAL_OK) {
+    Error_Handler();
+  }
+  // старт ADC DMA
+  if (HAL_ADC_Start_DMA(&hadc1, (uint32_t*)g_adcRaw, ADC_CH_COUNT) != HAL_OK) {
+    Error_Handler();
+  }
+
+  // Включить главный выход TIM1
+  __HAL_TIM_MOE_ENABLE(&htim1);
+  __HAL_TIM_MOE_ENABLE(&htim3);
+  // PWM0 -> TIM1_CH1
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+  // PWM3 -> TIM1_CH2 (если используешь)
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+
+  // PWM0 -> TIM1_CH3
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+
+  // PWM3 -> TIM1_CH4 (если используешь)
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+
+  // PWM1 -> TIM4_CH1
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+
+  // PWM2 -> TIM4_CH2
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+//
+  u3_start();
+
+
+
+  init_rtos();
   /* Init scheduler */
   osKernelInitialize();
 
@@ -182,11 +227,11 @@ int main(void)
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
-  /* creation of plc_scan_task */
-  plc_scan_taskHandle = osThreadNew(PlcScanTask, NULL, &plc_scan_task_attributes);
-
-  /* creation of modbus_tcp_task */
-  modbus_tcp_taskHandle = osThreadNew(ModbusTCPTask, NULL, &modbus_tcp_task_attributes);
+//  /* creation of plc_scan_task */
+//  plc_scan_taskHandle = osThreadNew(PlcScanTask, NULL, &plc_scan_task_attributes);
+//
+//  /* creation of modbus_tcp_task */
+//  modbus_tcp_taskHandle = osThreadNew(ModbusTCPTask, NULL, &modbus_tcp_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -234,15 +279,17 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_LSI
+                              |RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
+  RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 5;
   RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = 2;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
+  RCC_OscInitStruct.PLL.PLLQ = 15;
   RCC_OscInitStruct.PLL.PLLR = 2;
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
@@ -269,6 +316,10 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
+  /** Enables the Clock Security System
+  */
+  HAL_RCC_EnableCSS();
 }
 
 /**
@@ -717,7 +768,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+int _write(int file, char *ptr, int len) {
+  if (xPortIsInsideInterrupt()) {
+    UsbLog_PutFromISR(ptr, (size_t) len);  // без блокировок
+  } else {
+    UsbLog_Put(ptr, (size_t) len);         // обычный путь
+  }
+  return len;
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -730,7 +788,10 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* init code for LWIP */
-  MX_LWIP_Init();
+//  MX_LWIP_Init();
+
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
@@ -753,7 +814,8 @@ void PlcScanTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    plc_tick();
+    osDelay(10);
   }
   /* USER CODE END PlcScanTask */
 }
