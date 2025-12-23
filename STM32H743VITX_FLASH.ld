@@ -49,11 +49,19 @@ MEMORY
   RAM_D2 (xrw)   : ORIGIN = 0x30000000, LENGTH = 288K
   RAM_D3 (xrw)   : ORIGIN = 0x38000000, LENGTH = 64K
   ITCMRAM (xrw)  : ORIGIN = 0x00000000, LENGTH = 64K
+  D2_DMA (xrw)   : ORIGIN = 0x30040000, LENGTH = 32K
 }
 
 /* Define output sections */
 SECTIONS
 {
+    .dma_buf (NOLOAD) :
+        {
+          . = ALIGN(32);
+          *(.dma_buf)
+          *(.dma_buf*)
+          . = ALIGN(32);
+        } > D2_DMA
   /* The startup code goes first into FLASH */
   .isr_vector :
   {

@@ -41,15 +41,15 @@ void init_rtos(void)
     CHECK_OK(s_txDone!=NULL, "s_txDone 1K");
 
     BaseType_t rc;
-    rc = xTaskCreate(TaskPlcScan, "PLC",   512, NULL, tskIDLE_PRIORITY+3, NULL);
+    rc = xTaskCreate(TaskPlcScan, "PLC",   1024, NULL, tskIDLE_PRIORITY+3, NULL);
     CHECK_OK(rc==pdPASS, "Task PLC");
 
     BaseType_t rc1;
-    rc1 = xTaskCreate(TaskComms,   "COMMS", 1024, NULL, tskIDLE_PRIORITY+2, NULL);
+    rc1 = xTaskCreate(TaskComms,   "COMMS", 2048, NULL, tskIDLE_PRIORITY+2, NULL);
     CHECK_OK(rc1==pdPASS, "Task COMMS");
 
     BaseType_t rc2;
-    rc2 = xTaskCreate(UartTx_Task, "uart_tx", 512, NULL, tskIDLE_PRIORITY+2, NULL);
+    rc2 = xTaskCreate(UartTx_Task, "uart_tx", 1024, NULL, tskIDLE_PRIORITY+2, NULL);
     CHECK_OK(rc2==pdPASS, "Task uart_tx");
 
     vTaskStartScheduler();
@@ -84,7 +84,7 @@ void TaskPlcScan(void* arg)
 
 void TaskComms(void* arg)
 {
-    uint8_t tmp[128];
+    uint8_t tmp[512];
     uint32_t counter = 0;
     for (;;) {
         LOGT("TaskComms", "[HWM] %-10s: stackFree=%u bytes, heapFree=%u, heapMin=%u\r\n",

@@ -7,10 +7,10 @@ extern "C" {
 #include <stdbool.h>
 
 #define ADC_CH_COUNT 4
-
+#define DMA_ALIGN 32
 // Лучше в D2 SRAM, если используешь D-Cache:
 // GCC атрибут зависит от линкера, но минимум выровнять:
-extern  __attribute__((aligned(32))) volatile uint32_t g_adcRaw[ADC_CH_COUNT];
+extern volatile uint32_t g_adcRaw[4];
 
 /* ================== Константы и типы ================== */
 #define PLC_MAX_NODES 40          // подбери под свою память

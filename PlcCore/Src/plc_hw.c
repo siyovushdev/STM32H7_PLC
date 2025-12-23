@@ -178,6 +178,12 @@ void hw_write_discrete_output(int logicalCh, bool val)
     HAL_GPIO_WritePin(m->port, m->pin, phys ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
+static inline void adc_invalidate_cache(void)
+{
+    // Важно: размер в байтах, адрес и размер должны быть кратны 32 (у тебя aligned(32) уже ок)
+    SCB_InvalidateDCache_by_Addr((uint32_t*)g_adcRaw, sizeof(g_adcRaw));
+}
+
 int32_t hw_read_adc_input(int logicalCh)
 {
     if (logicalCh < 0 || logicalCh >= (int)hw_ai_count) {
