@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "lwip.h"
 #include "usb_device.h"
 #include "plc.h"
 #include "logf.h"
@@ -168,6 +169,7 @@ int main(void)
   MX_TIM3_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+
   UsbLog_Init();
   logf_set_level(LOG_LEVEL_DEBUG); // показывать всё
   logf_set_enabled(true);          // включить логи
@@ -221,7 +223,7 @@ int main(void)
 
   init_rtos();
   /* Init scheduler */
-  osKernelInitialize();
+//  osKernelInitialize();
 
   /* USER CODE BEGIN RTOS_MUTEX */
 //  /* add mutexes, ... */
@@ -241,7 +243,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+//  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
 //  /* creation of plc_scan_task */
 //  plc_scan_taskHandle = osThreadNew(PlcScanTask, NULL, &plc_scan_task_attributes);
@@ -258,7 +260,7 @@ int main(void)
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
-  osKernelStart();
+//  osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
 
@@ -744,10 +746,10 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOC_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, DO2_Pin|DO3_Pin|DO4_Pin|DO5_Pin
@@ -803,6 +805,9 @@ void StartDefaultTask(void *argument)
 {
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
+
+  /* init code for LWIP */
+  MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
@@ -851,74 +856,82 @@ void ModbusTCPTask(void *argument)
 
  /* MPU Configuration */
 
-void MPU_Config(void)
-{
-  MPU_Region_InitTypeDef MPU_InitStruct = {0};
+ void MPU_Config(void)
+ {
+     MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
-  /* Disables the MPU */
-  HAL_MPU_Disable();
+     HAL_MPU_Disable();
 
-  /** Initializes and configures the Region and the memory to be protected
-  */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER0;
-  MPU_InitStruct.BaseAddress = 0x0;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_4GB;
-  MPU_InitStruct.SubRegionDisable = 0x87;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-  MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+     // Region 0: deny all (как у тебя)
+     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+     MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+     MPU_InitStruct.BaseAddress = 0x00000000;
+     MPU_InitStruct.Size = MPU_REGION_SIZE_4GB;
+     MPU_InitStruct.SubRegionDisable = 0x87;
+     MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+     MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
+     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+     MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+     // Region 1: Flash (как у тебя)
+     MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+     MPU_InitStruct.BaseAddress = 0x08000000;
+     MPU_InitStruct.Size = MPU_REGION_SIZE_2MB;
+     MPU_InitStruct.SubRegionDisable = 0x0;
+     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+     MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+     MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /** Initializes and configures the Region and the memory to be protected
-  */
-  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
-  MPU_InitStruct.BaseAddress = 0x08000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_2MB;
-  MPU_InitStruct.SubRegionDisable = 0x0;
-  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+     // Region 2: D1 SRAM (оставляю как у тебя по смыслу, но выставляю явно поля)
+     MPU_InitStruct.Number = MPU_REGION_NUMBER2;
+     MPU_InitStruct.BaseAddress = 0x24000000;
+     MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
+     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+     MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+     MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+     MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
+     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+     // Region 3: D2 SRAM for ETH (ВАЖНО: non-cacheable!)
+     // Здесь лежат:
+     //   Rx Desc: 0x30000000
+     //   Tx Desc: 0x30000080
+     //   Rx Buff: 0x30000100
+     MPU_InitStruct.Number = MPU_REGION_NUMBER3;
+     MPU_InitStruct.BaseAddress = 0x30000000;
+     MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
+     MPU_InitStruct.SubRegionDisable = 0x0;
+     MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+     MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /** Initializes and configures the Region and the memory to be protected
-  */
-  MPU_InitStruct.Number = MPU_REGION_NUMBER2;
-  MPU_InitStruct.BaseAddress = 0x24000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
+     // Region 4: (у тебя уже non-cacheable, оставляем)
+     MPU_InitStruct.Number = MPU_REGION_NUMBER4;
+     MPU_InitStruct.BaseAddress = 0x30040000;
+     MPU_InitStruct.Size = MPU_REGION_SIZE_32KB;
+     MPU_InitStruct.SubRegionDisable = 0x0;
+     MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+     MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+     HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+ }
 
-  /** Initializes and configures the Region and the memory to be protected
-  */
-  MPU_InitStruct.Number = MPU_REGION_NUMBER3;
-  MPU_InitStruct.BaseAddress = 0x30000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
-
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
-
-  /** Initializes and configures the Region and the memory to be protected
-  */
-  MPU_InitStruct.Number = MPU_REGION_NUMBER4;
-  MPU_InitStruct.BaseAddress = 0x30040000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_32KB;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
-  /* Enables the MPU */
-  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
-
-}
 
 /**
   * @brief  Period elapsed callback in non blocking mode

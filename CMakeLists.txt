@@ -50,20 +50,25 @@ else ()
 endif ()
 
 include_directories(
-        Core/Inc FATFS/Target
-        FATFS/App
-        LWIP/App
-        LWIP/Target
-        Middlewares/Third_Party/LwIP/src/include
-        Middlewares/Third_Party/LwIP/system
+        Core/Inc
         Drivers/STM32H7xx_HAL_Driver/Inc
         Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
         Middlewares/Third_Party/FreeRTOS/Source/include
         Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
         Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM7
-        Middlewares/Third_Party/FatFs/src Drivers/BSP/Components/lan8742
-        Middlewares/Third_Party/LwIP/src/include/netif/ppp
         Drivers/CMSIS/Device/ST/STM32H7xx/Include
+        Drivers/CMSIS/Include
+        tinycbor/inc
+        PlcCore/Inc
+        USB_DEVICE/App
+        USB_DEVICE/Target
+        Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+        Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+        LWIP/App
+        LWIP/Target
+        Middlewares/Third_Party/LwIP/src/include
+        Middlewares/Third_Party/LwIP/system
+        Middlewares/Third_Party/LwIP/src/include/netif/ppp
         Middlewares/Third_Party/LwIP/src/include/lwip
         Middlewares/Third_Party/LwIP/src/include/lwip/apps
         Middlewares/Third_Party/LwIP/src/include/lwip/priv
@@ -74,20 +79,12 @@ include_directories(
         Middlewares/Third_Party/LwIP/src/include/compat/posix/net
         Middlewares/Third_Party/LwIP/src/include/compat/posix/sys
         Middlewares/Third_Party/LwIP/src/include/compat/stdc
-        Middlewares/Third_Party/LwIP/system/arch
-        Drivers/CMSIS/Include
-        tinycbor/inc
-        PlcCore/Inc
-        USB_DEVICE/App
-        USB_DEVICE/Target
-        Middlewares/ST/STM32_USB_Device_Library/Core/Inc
-        Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc)
+        Middlewares/Third_Party/LwIP/system/arch)
 
 add_definitions(-DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H743xx)
 
 file(GLOB_RECURSE SOURCES
         "Core/*.*"
-        "FATFS/*.*"
         "Middlewares/*.*"
         "LWIP/*.*"
         "tinycbor/src/*.*"

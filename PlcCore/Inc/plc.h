@@ -267,6 +267,8 @@ void UartTx_Task(void *arg);  // создать один раз
 */
 void TaskComms(void* arg);
 
+void TaskInitial(void* arg);
+
 /* Функция init_rtos() вызывается из main.c
    после HAL_Init, настройки GPIO/UART/ADC/TIM/IWDG:
    - создаёт plcCmdQueue

@@ -8,6 +8,8 @@
 
 #include "debug_utils.h"
 #include "usb_device.h"
+#include "lwip.h"
+#include "eth_custom_phy_interface.h"
 
 #define UART_STREAM_SIZE     1024u
 #define UART_TRIGGER_LEVEL   1u      // можно 1: пробуждать таск на любом байте
@@ -41,23 +43,33 @@ void init_rtos(void)
     CHECK_OK(s_txDone!=NULL, "s_txDone 1K");
 
     BaseType_t rc;
-    rc = xTaskCreate(TaskPlcScan, "PLC",   1024, NULL, tskIDLE_PRIORITY+3, NULL);
+    rc = xTaskCreate(TaskPlcScan, "PLC",   2048, NULL, tskIDLE_PRIORITY+3, NULL);
     CHECK_OK(rc==pdPASS, "Task PLC");
 
     BaseType_t rc1;
-    rc1 = xTaskCreate(TaskComms,   "COMMS", 2048, NULL, tskIDLE_PRIORITY+2, NULL);
+    rc1 = xTaskCreate(TaskComms,   "COMMS", 4096, NULL, tskIDLE_PRIORITY+2, NULL);
     CHECK_OK(rc1==pdPASS, "Task COMMS");
 
     BaseType_t rc2;
-    rc2 = xTaskCreate(UartTx_Task, "uart_tx", 1024, NULL, tskIDLE_PRIORITY+2, NULL);
+    rc2 = xTaskCreate(UartTx_Task, "uart_tx", 2048, NULL, tskIDLE_PRIORITY+2, NULL);
     CHECK_OK(rc2==pdPASS, "Task uart_tx");
+
+    BaseType_t rc3;
+    rc3 = xTaskCreate(TaskInitial, "initial", 4096, NULL, tskIDLE_PRIORITY+1, NULL);
+    CHECK_OK(rc3==pdPASS, "Task initial");
 
     vTaskStartScheduler();
 }
 
+void TaskInitial(void* arg){
+    MX_USB_DEVICE_Init();
+    MX_LWIP_Init();
+    vTaskDelete(NULL);
+}
+
 void TaskPlcScan(void* arg)
 {
-    MX_USB_DEVICE_Init();
+//    MX_USB_DEVICE_Init();
     TickType_t lastWake = xTaskGetTickCount();
     uint32_t counter = 0;
     for (;;) {

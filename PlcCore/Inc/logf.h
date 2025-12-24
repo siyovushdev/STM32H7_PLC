@@ -56,3 +56,4 @@ void logf_emitByTag(const char* tag, const char* func, int line, const char* fmt
 }
 #endif
 #endif // LOGF_H
+
