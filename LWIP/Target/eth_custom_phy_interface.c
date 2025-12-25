@@ -1,104 +1,128 @@
 #include "eth_custom_phy_interface.h"
-#include "main.h"
-#include "stm32h7xx_hal.h"
-#include "logf.h"
+#include "ethernetif.h"   // тут обычно объявлены ETH_PHY_IO_* функции
+#include <stdint.h>
 
-extern ETH_HandleTypeDef heth;
+/* Clause 22 стандартные регистры */
+#define PHY_REG_BMCR     0x00u
+#define PHY_REG_BMSR     0x01u
+#define PHY_REG_PHYID1   0x02u
+#define PHY_REG_PHYID2   0x03u
 
-#define ETH_LOG_TAG "ETH"
+/* LAN8720: PHY Special Control/Status (PSCSR) = 0x1F */
+#define LAN8720_REG_PSCSR 0x1Fu
 
-// На таких LAN8720 модулях почти всегда PHY addr = 0.
-// Если PHY ID читается как 0xFFFF/0xFFFF — попробуй 1.
-#ifndef LAN8720_PHY_ADDR
-#define LAN8720_PHY_ADDR  1
-#endif
+/* BMCR bits */
+#define BMCR_RESET       (1u << 15)
+#define BMCR_AN_EN       (1u << 12)
+#define BMCR_RESTART_AN  (1u << 9)
 
-// MII registers
-#define PHY_BCR           0x00
-#define PHY_BSR           0x01
-#define PHY_ID1           0x02
-#define PHY_ID2           0x03
+/* BMSR bits */
+#define BMSR_LINK_STATUS (1u << 2)
+#define BMSR_AN_COMPLETE (1u << 5)
 
-// BCR bits
-#define BCR_RESET         (1U << 15)
-#define BCR_AUTONEG_EN    (1U << 12)
-#define BCR_RESTART_AN    (1U << 9)
+/* PSCSR HCDSPEED field (как у Oryx для LAN8720) */
+#define PSCSR_HCDSPEED_MASK        0x001Cu
+#define PSCSR_10BT_HD              0x0004u
+#define PSCSR_100BTX_HD            0x0008u
+#define PSCSR_10BT_FD              0x0014u
+#define PSCSR_100BTX_FD            0x0018u
 
-// BSR bits
-#define BSR_LINK_STATUS   (1U << 2)
+/* Если ты не уверен в PHY адресе — включи автоскан */
+#define PHY_ADDR_AUTOSCAN 1
 
-// LAN8720 specific: PHY Special Control/Status Register (PHYSCSR)
-#define LAN8720_PHYSCSR   0x1F
+static uint32_t g_phyAddr = 0xFFFFFFFFu;
 
-static int mdio_read(uint32_t reg, uint32_t *val)
+static int phy_read(uint32_t addr, uint32_t reg, uint32_t *val)
 {
-    return (HAL_ETH_ReadPHYRegister(&heth, LAN8720_PHY_ADDR, reg, val) == HAL_OK) ? 0 : -1;
+    return (ETH_PHY_IO_ReadReg(addr, reg, val) == 0) ? 0 : -1;
 }
 
-static int mdio_write(uint32_t reg, uint32_t val)
+static int phy_write(uint32_t addr, uint32_t reg, uint32_t val)
 {
-    return (HAL_ETH_WritePHYRegister(&heth, LAN8720_PHY_ADDR, reg, val) == HAL_OK) ? 0 : -1;
+    return (ETH_PHY_IO_WriteReg(addr, reg, val) == 0) ? 0 : -1;
+}
+
+static uint32_t ms_now(void)
+{
+    return (uint32_t)ETH_PHY_IO_GetTick();
+}
+
+static int scan_phy_addr(uint32_t *outAddr)
+{
+    for (uint32_t a = 0; a < 32; a++)
+    {
+        uint32_t id1 = 0, id2 = 0;
+        if (phy_read(a, PHY_REG_PHYID1, &id1) == 0 &&
+            phy_read(a, PHY_REG_PHYID2, &id2) == 0)
+        {
+            if (id1 != 0x0000u && id1 != 0xFFFFu)
+            {
+                *outAddr = a;
+                return 0;
+            }
+        }
+    }
+    return -1;
 }
 
 int32_t eth_phy_init(void)
 {
-    uint32_t id1 = 0, id2 = 0;
-    int found = -1;
+    if (ETH_PHY_IO_Init() != 0)
+        return -1;
 
-    for (int addr = 0; addr < 32; addr++) {
-        if (HAL_ETH_ReadPHYRegister(&heth, addr, PHY_ID1, &id1) != HAL_OK) continue;
-        if (HAL_ETH_ReadPHYRegister(&heth, addr, PHY_ID2, &id2) != HAL_OK) continue;
+#if PHY_ADDR_AUTOSCAN
+    if (scan_phy_addr(&g_phyAddr) != 0)
+        return -1;
+#else
+    /* Если хочешь фиксированный адрес — задай тут (обычно 0 или 1) */
+  g_phyAddr = 0;
+#endif
 
-        if (id1 != 0xFFFFu && id1 != 0x0000u) {
-            LOGT("ETH", "PHY found addr=%d ID1=0x%04lX ID2=0x%04lX", addr, id1, id2);
-            found = addr;
-            break;
-        }
+    /* Soft reset */
+    uint32_t bmcr = 0;
+    if (phy_read(g_phyAddr, PHY_REG_BMCR, &bmcr) != 0) return -1;
+    if (phy_write(g_phyAddr, PHY_REG_BMCR, bmcr | BMCR_RESET) != 0) return -1;
+
+    uint32_t t0 = ms_now();
+    while (1)
+    {
+        if (phy_read(g_phyAddr, PHY_REG_BMCR, &bmcr) != 0) return -1;
+        if ((bmcr & BMCR_RESET) == 0) break;
+        if ((ms_now() - t0) > 500u) return -1;
     }
 
-    if (found < 0) {
-        LOGT("ETH", "PHY NOT FOUND via MDIO (all addrs invalid)");
-        return ETH_PHY_STATUS_LINK_DOWN;
-    }
+    /* Enable autoneg + restart */
+    if (phy_read(g_phyAddr, PHY_REG_BMCR, &bmcr) != 0) return -1;
+    bmcr |= (BMCR_AN_EN | BMCR_RESTART_AN);
+    if (phy_write(g_phyAddr, PHY_REG_BMCR, bmcr) != 0) return -1;
 
-
-    return ETH_PHY_STATUS_LINK_DOWN; // фактический линк проверяется в ethernet_link_thread()
+    return 0;
 }
 
 int32_t eth_phy_get_link_state(void)
 {
-    uint32_t bsr = 0;
+    if (g_phyAddr == 0xFFFFFFFFu)
+        return ETH_PHY_STATUS_LINK_ERROR;
 
-    if (mdio_read(PHY_BSR, &bsr) != 0) {
+    uint32_t bmsr1 = 0, bmsr2 = 0;
+
+    /* ВАЖНО: BMSR читаем два раза (latched) — как в Oryx :contentReference[oaicite:4]{index=4} */
+    if (phy_read(g_phyAddr, PHY_REG_BMSR, &bmsr1) != 0) return ETH_PHY_STATUS_LINK_ERROR;
+    if (phy_read(g_phyAddr, PHY_REG_BMSR, &bmsr2) != 0) return ETH_PHY_STATUS_LINK_ERROR;
+
+    if ((bmsr2 & BMSR_LINK_STATUS) == 0)
         return ETH_PHY_STATUS_LINK_DOWN;
-    }
 
-    // ВАЖНО: 0xFFFF/0x0000 = недостоверное чтение (MDIO не работает)
-    if (bsr == 0xFFFFu || bsr == 0x0000u) {
-        return ETH_PHY_STATUS_LINK_DOWN;
-    }
+    uint32_t pscsr = 0;
+    if (phy_read(g_phyAddr, LAN8720_REG_PSCSR, &pscsr) != 0)
+        return ETH_PHY_STATUS_LINK_ERROR;
 
-    if ((bsr & BSR_LINK_STATUS) == 0) {
-        return ETH_PHY_STATUS_LINK_DOWN;
-    }
-
-    uint32_t scsr = 0;
-    if (mdio_read(LAN8720_PHYSCSR, &scsr) != 0) {
-        return ETH_PHY_STATUS_100MBITS_FULLDUPLEX;
-    }
-
-    if (scsr == 0xFFFFu || scsr == 0x0000u) {
-        // режим не смогли прочитать — но линк есть
-        return ETH_PHY_STATUS_100MBITS_FULLDUPLEX;
-    }
-
-    uint32_t mode = (scsr >> 2) & 0x7U;
-    switch (mode) {
-        case 0x1: return ETH_PHY_STATUS_10MBITS_HALFDUPLEX;
-        case 0x2: return ETH_PHY_STATUS_10MBITS_FULLDUPLEX;
-        case 0x5: return ETH_PHY_STATUS_100MBITS_HALFDUPLEX;
-        case 0x6: return ETH_PHY_STATUS_100MBITS_FULLDUPLEX;
-        default:  return ETH_PHY_STATUS_100MBITS_FULLDUPLEX;
+    switch (pscsr & PSCSR_HCDSPEED_MASK)
+    {
+        case PSCSR_100BTX_FD: return ETH_PHY_STATUS_100MBITS_FULLDUPLEX;
+        case PSCSR_100BTX_HD: return ETH_PHY_STATUS_100MBITS_HALFDUPLEX;
+        case PSCSR_10BT_FD:   return ETH_PHY_STATUS_10MBITS_FULLDUPLEX;
+        case PSCSR_10BT_HD:   return ETH_PHY_STATUS_10MBITS_HALFDUPLEX;
+        default:              return ETH_PHY_STATUS_AUTONEGO_NOT_DONE;
     }
 }
-

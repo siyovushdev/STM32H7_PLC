@@ -1,8 +1,8 @@
 #include "uart3_cmd_handler.h"   // можешь переименовать в uart3_cmd_handler.h, если хочешь
-#include "FreeRTOS.h"
+
 #include "stream_buffer.h"
 #include "message_buffer.h"
-#include "semphr.h"
+#include "cmsis_os2.h"
 #include "stm32h7xx_hal.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -11,7 +11,7 @@
 
 // -------------------- extern из твоего проекта --------------------
 extern MessageBufferHandle_t s_mb;
-extern SemaphoreHandle_t     s_txDone;        // бинарный семафор "TX DMA complete"
+extern osSemaphoreId_t s_txDone;        // бинарный семафор "TX DMA complete"
 extern StreamBufferHandle_t  g_uartRxStream;
 
 extern UART_HandleTypeDef    huart3;          // <-- ВАЖНО: теперь USART3
@@ -75,9 +75,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart != &huart3) return;
 
-    BaseType_t hpw = pdFALSE;
-    xSemaphoreGiveFromISR(s_txDone, &hpw);
-    portYIELD_FROM_ISR(hpw);
+    osSemaphoreRelease(s_txDone);
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)

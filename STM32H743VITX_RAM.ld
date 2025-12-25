@@ -54,6 +54,32 @@ MEMORY
 /* Define output sections */
 SECTIONS
 {
+.RxDecripSection (NOLOAD) :
+{
+  . = ALIGN(32);
+  *(.RxDecripSection)
+  . = ALIGN(32);
+} >RAM_D2
+
+.TxDecripSection (NOLOAD) :
+{
+  . = ALIGN(32);
+  *(.TxDecripSection)
+  . = ALIGN(32);
+} >RAM_D2
+
+.Rx_PoolSection (NOLOAD) :
+{
+  . = ALIGN(32);
+  *(.Rx_PoolSection)
+  . = ALIGN(32);
+} >RAM_D2
+    .eth_dma (NOLOAD) :
+    {
+      . = ALIGN(32);
+      *(.eth_dma)
+      . = ALIGN(32);
+    } >RAM_D2
     .dma_buf (NOLOAD) :
     {
       . = ALIGN(32);

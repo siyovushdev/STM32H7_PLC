@@ -1,8 +1,6 @@
 #include "usb_log.h"
 #include "usbd_cdc_if.h"
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"
+#include "cmsis_os2.h"
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -13,8 +11,9 @@
 
 static uint8_t ring[USB_LOG_BUF_SZ];
 static volatile size_t w = 0, r = 0;
-static SemaphoreHandle_t mtx;
-static TaskHandle_t txTask;
+static osMutexId_t  mtx;
+static osThreadId_t txTask;
+#define USBLOG_FLAG (1u << 0)
 
 static inline int cdc_ready(void){
     extern USBD_HandleTypeDef hUsbDeviceFS;
@@ -62,61 +61,76 @@ void Usb_SendBlocking(const uint8_t* data, size_t n)
 }
 
 
-static void UsbLog_Task(void* arg) {
+static void UsbLog_Task(void* arg)
+{
+    (void)arg;
     uint8_t chunk[256];
-    for (;;) {
-        // ждём уведомления или таймаут
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5));
+
+    for (;;)
+    {
+        osThreadFlagsWait(USBLOG_FLAG, osFlagsWaitAny, 5);
+
         size_t n;
         do {
             n = 0;
-            xSemaphoreTake(mtx, portMAX_DELAY);
+            osMutexAcquire(mtx, osWaitForever);
             n = _pull(chunk, sizeof(chunk));
-            xSemaphoreGive(mtx);
+            osMutexRelease(mtx);
+
             if (n) {
                 if (!cdc_ready()) {
-                    // USB не готов — просто дропаем кусок (или положите обратно, если нужно)
                     continue;
                 }
-                // Ограничим «залипание» на BUSY, чтобы не блокировать систему
                 uint32_t tries = 0;
                 while (CDC_Transmit_FS(chunk, n) == USBD_BUSY) {
-                    vTaskDelay(pdMS_TO_TICKS(1));
-                    if (++tries > 20) { // ~20 мс терпения
-                        break;          // дропаем остаток, идём дальше
-                    }
+                    osDelay(1);
+                    if (++tries > 20) break;
                 }
             }
         } while (n);
     }
 }
 
-void UsbLog_Init(void) {
-    mtx = xSemaphoreCreateMutex();
-    xTaskCreate(UsbLog_Task, "UsbLogTx", 1024, NULL, tskIDLE_PRIORITY+2, &txTask);
+
+void UsbLog_Init(void)
+{
+    mtx = osMutexNew(NULL);
+    const osThreadAttr_t a = {
+            .name = "UsbLogTx",
+            .stack_size = 4096,
+            .priority = osPriorityNormal
+    };
+    txTask = osThreadNew(UsbLog_Task, NULL, &a);
 }
 
-void UsbLog_PutFromISR(const char* s, size_t n) {
+void UsbLog_PutFromISR(const char* s, size_t n)
+{
     if (!n) return;
-    UBaseType_t prim = taskENTER_CRITICAL_FROM_ISR();
+
+    uint32_t prim = __get_PRIMASK();
+    __disable_irq();
+
     size_t free = _space();
-    if (n > free) n = free;               // без ожиданий — лишнее отбрасываем
+    if (n > free) n = free;
     _push((const uint8_t*)s, n);
-    taskEXIT_CRITICAL_FROM_ISR(prim);
-    if (txTask) {                    // ВАЖНО: проверяем handle
-        vTaskNotifyGiveFromISR(txTask, NULL); // разбудить TX-таску
+
+    if (!prim) __enable_irq();
+
+    if (txTask) {
+        osThreadFlagsSet(txTask, USBLOG_FLAG);
     }
 }
 
+
 void UsbLog_Put(const char* s, size_t n) {
     if (!n) return;
-    xSemaphoreTake(mtx, portMAX_DELAY);
+    osMutexAcquire(mtx, osWaitForever);
     size_t free = _space();
     if (n > free) n = free;           // обрезаем тихо (или можно дожидаться)
     _push((const uint8_t*)s, n);
-    xSemaphoreGive(mtx);
+    osMutexRelease(mtx);
     // Разбудить TX-таску сразу, а не ждать 5 мс
-    xTaskNotifyGive(txTask);
+    osThreadFlagsSet(txTask, USBLOG_FLAG);
 }
 
 void UsbLog_Puts(const char* s) {

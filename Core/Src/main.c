@@ -129,16 +129,16 @@ int main(void)
 
   /* USER CODE END 1 */
 
-  /* MPU Configuration--------------------------------------------------------*/
-  MPU_Config();
-
-  /* Enable the CPU Cache */
-
-  /* Enable I-Cache---------------------------------------------------------*/
-  SCB_EnableICache();
-
-  /* Enable D-Cache---------------------------------------------------------*/
-  SCB_EnableDCache();
+//  /* MPU Configuration--------------------------------------------------------*/
+//  MPU_Config();
+//
+//  /* Enable the CPU Cache */
+//
+//  /* Enable I-Cache---------------------------------------------------------*/
+//  SCB_EnableICache();
+//
+//  /* Enable D-Cache---------------------------------------------------------*/
+//  SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
