@@ -130,15 +130,15 @@ int main(void)
   /* USER CODE END 1 */
 
 //  /* MPU Configuration--------------------------------------------------------*/
-//  MPU_Config();
-//
-//  /* Enable the CPU Cache */
-//
-//  /* Enable I-Cache---------------------------------------------------------*/
-//  SCB_EnableICache();
-//
-//  /* Enable D-Cache---------------------------------------------------------*/
-//  SCB_EnableDCache();
+  MPU_Config();
+
+  /* Enable the CPU Cache */
+
+  /* Enable I-Cache---------------------------------------------------------*/
+  SCB_EnableICache();
+
+  /* Enable D-Cache---------------------------------------------------------*/
+  SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -858,78 +858,64 @@ void ModbusTCPTask(void *argument)
 
  void MPU_Config(void)
  {
-     MPU_Region_InitTypeDef MPU_InitStruct = {0};
+   MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
-     HAL_MPU_Disable();
+   /* Disables the MPU */
+   HAL_MPU_Disable();
 
-     // Region 0: deny all (как у тебя)
-     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-     MPU_InitStruct.Number = MPU_REGION_NUMBER0;
-     MPU_InitStruct.BaseAddress = 0x00000000;
-     MPU_InitStruct.Size = MPU_REGION_SIZE_4GB;
-     MPU_InitStruct.SubRegionDisable = 0x87;
-     MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-     MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
-     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-     MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-     HAL_MPU_ConfigRegion(&MPU_InitStruct);
+   /** Initializes and configures the Region and the memory to be protected
+   */
+   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+   MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+   MPU_InitStruct.BaseAddress = 0x0;
+   MPU_InitStruct.Size = MPU_REGION_SIZE_4GB;
+   MPU_InitStruct.SubRegionDisable = 0x87;
+   MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+   MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
+   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+   MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+   MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
 
-     // Region 1: Flash (как у тебя)
-     MPU_InitStruct.Number = MPU_REGION_NUMBER1;
-     MPU_InitStruct.BaseAddress = 0x08000000;
-     MPU_InitStruct.Size = MPU_REGION_SIZE_2MB;
-     MPU_InitStruct.SubRegionDisable = 0x0;
-     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
-     MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-     MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
-     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-     HAL_MPU_ConfigRegion(&MPU_InitStruct);
+   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-     // Region 2: D1 SRAM (оставляю как у тебя по смыслу, но выставляю явно поля)
-     MPU_InitStruct.Number = MPU_REGION_NUMBER2;
-     MPU_InitStruct.BaseAddress = 0x24000000;
-     MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
-     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-     MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-     MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
-     MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
-     HAL_MPU_ConfigRegion(&MPU_InitStruct);
+   /** Initializes and configures the Region and the memory to be protected
+   */
+   MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+   MPU_InitStruct.BaseAddress = 0x30000000;
+   MPU_InitStruct.Size = MPU_REGION_SIZE_256B;
+   MPU_InitStruct.SubRegionDisable = 0x0;
+   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+   MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+   MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
 
-     // Region 3: D2 SRAM for ETH (ВАЖНО: non-cacheable!)
-     // Здесь лежат:
-     //   Rx Desc: 0x30000000
-     //   Tx Desc: 0x30000080
-     //   Rx Buff: 0x30000100
-     MPU_InitStruct.Number = MPU_REGION_NUMBER3;
-     MPU_InitStruct.BaseAddress = 0x30000000;
-     MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
-     MPU_InitStruct.SubRegionDisable = 0x0;
-     MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-     MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-     HAL_MPU_ConfigRegion(&MPU_InitStruct);
+   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-     // Region 4: (у тебя уже non-cacheable, оставляем)
-     MPU_InitStruct.Number = MPU_REGION_NUMBER4;
-     MPU_InitStruct.BaseAddress = 0x30040000;
-     MPU_InitStruct.Size = MPU_REGION_SIZE_32KB;
-     MPU_InitStruct.SubRegionDisable = 0x0;
-     MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-     MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-     MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-     MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-     HAL_MPU_ConfigRegion(&MPU_InitStruct);
+   /** Initializes and configures the Region and the memory to be protected
+   */
+   MPU_InitStruct.Number = MPU_REGION_NUMBER2;
+   MPU_InitStruct.BaseAddress = 0x30004000;
+   MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
+   MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+   MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
 
-     HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+   /** Initializes and configures the Region and the memory to be protected
+   */
+   MPU_InitStruct.Number = MPU_REGION_NUMBER3;
+   MPU_InitStruct.BaseAddress = 0x0;
+   MPU_InitStruct.Size = MPU_REGION_SIZE_32B;
+   MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+   MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
+   MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+
+   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+   /* Enables the MPU */
+   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+
  }
 
 
