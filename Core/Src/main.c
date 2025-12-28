@@ -753,7 +753,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, DO2_Pin|DO3_Pin|DO4_Pin|DO5_Pin
-                          |DO6_Pin|DO7_Pin|DO0_Pin|DO1_Pin, GPIO_PIN_SET);
+                          |DO6_Pin|DO7_Pin|DO0_Pin|DO1_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : DO2_Pin DO3_Pin DO4_Pin DO5_Pin
                            DO6_Pin DO7_Pin DO0_Pin DO1_Pin */
@@ -912,6 +912,19 @@ void ModbusTCPTask(void *argument)
    MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
    MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
 
+   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+   MPU_InitStruct.Number = MPU_REGION_NUMBER4;
+   MPU_InitStruct.BaseAddress = 0x30040000;
+   MPU_InitStruct.Size = MPU_REGION_SIZE_32KB;
+   MPU_InitStruct.SubRegionDisable = 0x00;
+   MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+   MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+   MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
    HAL_MPU_ConfigRegion(&MPU_InitStruct);
    /* Enables the MPU */
    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);

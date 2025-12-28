@@ -1,8 +1,6 @@
 #include "plc.h"
 #include "logf.h"
 #include <string.h> // memcpy
-#include "FreeRTOS.h"
-#include "queue.h"
 #include "plc_log.h"
 
 // ===== ЛОГИ PLC =====
@@ -20,7 +18,7 @@
 #endif
 
 #ifndef PLC_LOG_UPLOAD
-#define PLC_LOG_UPLOAD 1     // plc_upload_graph() — факт, размеры, цикл
+#define PLC_LOG_UPLOAD 0     // plc_upload_graph() — факт, размеры, цикл
 #endif
 
 #ifndef PLC_LOG_ACTIVATE
@@ -28,7 +26,7 @@
 #endif
 
 #ifndef PLC_LOG_TICK
-#define PLC_LOG_TICK 1       // хартбит plc_tick() — раз в PLC_TICK_HEARTBEAT_MS
+#define PLC_LOG_TICK 0       // хартбит plc_tick() — раз в PLC_TICK_HEARTBEAT_MS
 #endif
 #ifndef PLC_TICK_HEARTBEAT_MS
 #define PLC_TICK_HEARTBEAT_MS 1000u
@@ -661,14 +659,11 @@ bool plc_release_output(uint16_t nodeIndex)
         return true;
     }
 
-    taskENTER_CRITICAL();
-    {
+
         n->force_en      = false;
         n->flags        &= ~PLC_NODE_FLAG_FORCE;
         n->force_left_ms = 0;
         // force_bool можно не трогать, он больше не используется
-    }
-    taskEXIT_CRITICAL();
 
 #if PLC_LOG_ENABLED && PLC_LOG_CMDS
     LOGT(PLC_LOG_TAG, "release_output: node[%u] OK", (unsigned)nodeIndex);
@@ -685,7 +680,7 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs)
          (unsigned)nodeIndex, (unsigned)value, (unsigned)holdMs);
 #endif
 
-    taskENTER_CRITICAL();
+
     do {
         if (!g_activeGraphValid) {
 #if PLC_LOG_ENABLED && PLC_LOG_CMDS
@@ -724,11 +719,10 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs)
              (unsigned)nodeIndex, (unsigned)n->force_bool, (unsigned)n->force_left_ms);
 #endif
 
-        taskEXIT_CRITICAL();
+
         return true;
     } while (0);
 
-    taskEXIT_CRITICAL();
     return false;
 }
 
@@ -754,13 +748,11 @@ void plc_tick(void) {
     if (dt > g_activeGraph.cycleMs) g_scan_long_steps++;
     // 1) активация нового графа
     if (g_needSwapGraph && g_stagingGraphValid) {
-        taskENTER_CRITICAL();
-        {
+
             g_activeGraph = g_stagingGraph;
             g_activeGraphValid = true;
             g_needSwapGraph = false;
-        }
-        taskEXIT_CRITICAL();
+
 
         // СБРОС ВСЕХ ВЫХОДОВ
         plc_hw_reset_outputs();
@@ -905,7 +897,7 @@ void plc_refresh_inputs_hw(PlcGraph *g) {
 
 void plc_apply_pending_cmds(PlcGraph *g, uint32_t dt_ms)
 {
-    taskENTER_CRITICAL();
+
     for (uint16_t i = 0; i < g->nodeCount; i++) {
         PlcNode *n = &g->nodes[i];
 
@@ -928,7 +920,6 @@ void plc_apply_pending_cmds(PlcGraph *g, uint32_t dt_ms)
             }
         }
     }
-    taskEXIT_CRITICAL();
 }
 
 static inline float get_float(const PlcNode *n) {

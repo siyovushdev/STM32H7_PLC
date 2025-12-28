@@ -55,6 +55,12 @@ MEMORY
 /* Define output sections */
 SECTIONS
 {
+.tcp_buf (NOLOAD) :
+{
+  . = ALIGN(32);
+  *(.tcp_buf)
+  . = ALIGN(32);
+} >RAM_D1
 .RxDecripSection (NOLOAD) :
 {
   . = ALIGN(32);

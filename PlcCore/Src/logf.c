@@ -32,23 +32,23 @@ void logf_emit(log_level_t lvl, const char* func, int line, const char* fmt, ...
 void logf_emitByTag(const char* tag, const char* func, int line, const char* fmt, ...){
     if (!g_log_enabled) return;
     // Формат: TAG L FUNC:LINE message
-//    printf("%s %s %s:%d ", tag, "D", func, line);
-//    va_list ap; va_start(ap, fmt);
-//    vprintf(fmt, ap);
-//    va_end(ap);
-//    printf("\r\n");
-    char msg[256];
-
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(msg, sizeof(msg), fmt, ap);
+    printf("%s %s %s:%d ", tag, "D", func, line);
+    va_list ap; va_start(ap, fmt);
+    vprintf(fmt, ap);
     va_end(ap);
-
-    UartLog_Printf("[%s] %s:%d %s\r\n",
-                   tag ? tag : "APP",
-                   func ? func : "?",
-                   line,
-                   msg);
+    printf("\r\n");
+//    char msg[256];
+//
+//    va_list ap;
+//    va_start(ap, fmt);
+//    vsnprintf(msg, sizeof(msg), fmt, ap);
+//    va_end(ap);
+//
+//    UartLog_Printf("[%s] %s:%d %s\r\n",
+//                   tag ? tag : "APP",
+//                   func ? func : "?",
+//                   line,
+//                   msg);
 }
 #else
 void logf_emit(log_level_t lvl, const char* func, int line, const char* fmt, ...){ (void)lvl;(void)func;(void)line;(void)fmt; }

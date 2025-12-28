@@ -164,8 +164,6 @@ void process_bytes_in_task(const uint8_t *data, size_t n) {
     }
 }
 
-
-
 /* -----------------------------------------
  * UART TX: отправка кадра
  * ----------------------------------------- */
@@ -197,3 +195,8 @@ BaseType_t uart_send(const uint8_t *payload, uint16_t len, TickType_t to) {
     if (frame != small) vPortFree(frame);
     return ok;
 }
+
+int PlcComm_HandleCbor(
+        const uint8_t *req, uint16_t req_len,
+        uint8_t *resp, uint16_t resp_cap, uint16_t *resp_len
+);

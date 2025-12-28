@@ -32,7 +32,6 @@ BaseType_t uart_send(const uint8_t* payload, uint16_t len, TickType_t to);
 
 void process_bytes_in_task(const uint8_t* data, size_t n);
 
-
 #ifdef __cplusplus
 }
 #endif

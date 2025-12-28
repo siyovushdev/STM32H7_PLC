@@ -12,6 +12,7 @@
 #include "usb_device.h"
 #include "lwip.h"
 #include "eth_custom_phy_interface.h"
+#include "plc_comm_tcp.h"
 
 #define UART_STREAM_SIZE     1024u
 #define UART_TRIGGER_LEVEL   1u      // можно 1: пробуждать таск на любом байте
@@ -139,13 +140,14 @@ void TaskInitial(void *arg) {
     MX_USB_DEVICE_Init();
     printf("&gnetif=%p\r\n", (void *) &gnetif);
     MX_LWIP_Init();
+    PlcCommTcp_Start(5555);
     for (;;) {
-        printf("pre\r\n");
+//        printf("pre\r\n");
+//        MX_LWIP_Process();
+//        printf("post\r\n");
+//        dbg_phy();
         MX_LWIP_Process();
-        printf("post\r\n");
-        dbg_phy();
-        MX_LWIP_Process();
-        osDelay(1000);
+        osDelay(1);
     }
 }
 

@@ -117,7 +117,12 @@
 #define CHECKSUM_CHECK_ICMP6 0
 /*-----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
+#undef  LWIP_SO_RCVTIMEO
+#define LWIP_SO_RCVTIMEO 1
 
+#ifndef NO_SYS
+#define NO_SYS 0
+#endif
 /* USER CODE END 1 */
 
 #ifdef __cplusplus
