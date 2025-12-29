@@ -855,6 +855,10 @@ void ModbusTCPTask(void *argument)
 }
 
  /* MPU Configuration */
+// void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+// {
+//   SCB_InvalidateDCache_by_Addr((uint32_t*)g_adcRaw, sizeof(g_adcRaw));
+// }
 
  void MPU_Config(void)
  {
@@ -900,6 +904,24 @@ void ModbusTCPTask(void *argument)
    MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
    MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
 
+   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+   // Region3: ADC DMA буфер g_adcRaw — делаем NON-CACHEABLE окно 32B
+   // Адрес берём реально от символа (после линкера)
+   uint32_t adcBase = ((uint32_t)&g_adcRaw[0]) & ~((uint32_t)0x1F); // вниз до 32B
+
+   memset(&MPU_InitStruct, 0, sizeof(MPU_InitStruct));
+   MPU_InitStruct.Enable           = MPU_REGION_ENABLE;
+   MPU_InitStruct.Number           = MPU_REGION_NUMBER3;      // выше приоритет чем Region1/2
+   MPU_InitStruct.BaseAddress      = adcBase;
+   MPU_InitStruct.Size             = MPU_REGION_SIZE_32B;
+   MPU_InitStruct.SubRegionDisable = 0x00;
+   MPU_InitStruct.TypeExtField     = MPU_TEX_LEVEL1;          // Normal memory
+   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+   MPU_InitStruct.DisableExec      = MPU_INSTRUCTION_ACCESS_ENABLE;
+   MPU_InitStruct.IsShareable      = MPU_ACCESS_SHAREABLE;
+   MPU_InitStruct.IsCacheable      = MPU_ACCESS_NOT_CACHEABLE;
+   MPU_InitStruct.IsBufferable     = MPU_ACCESS_NOT_BUFFERABLE;
    HAL_MPU_ConfigRegion(&MPU_InitStruct);
    /* Enables the MPU */
    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);

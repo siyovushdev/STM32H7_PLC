@@ -54,13 +54,14 @@ MEMORY
 /* Define output sections */
 SECTIONS
 {
-    .dma_buf (NOLOAD) :
-        {
-          . = ALIGN(32);
-          *(.dma_buf)
-          *(.dma_buf*)
-          . = ALIGN(32);
-        } > D2_DMA
+
+.dma_buf (NOLOAD) :
+{
+  . = ALIGN(32);
+  *(.dma_buf)
+  *(.dma_buf*)
+  . = ALIGN(32);
+} >RAM_D2
      /* Modification start */
       .lwip_sec (NOLOAD) :
       {
