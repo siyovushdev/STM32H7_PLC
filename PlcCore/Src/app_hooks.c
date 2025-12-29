@@ -11,6 +11,12 @@ void vApplicationMallocFailedHook(void) {
     UsbLog_printf("MALLOC FAILED: free=%u minEver=%u\r\n",
                   (unsigned)xPortGetFreeHeapSize(),
                   (unsigned)xPortGetMinimumEverFreeHeapSize());
+    while (1)
+    {
+        vTaskDelay(1000);
+        /* USER CODE BEGIN W1_HardFault_IRQn 0 */
+        /* USER CODE END W1_HardFault_IRQn 0 */
+    }
     // НЕ отключаем прерывания сразу — дайте UsbLog_TX задаче выслать буфер
     // taskDISABLE_INTERRUPTS(); for(;;);
 }
@@ -18,6 +24,12 @@ void vApplicationMallocFailedHook(void) {
 void vApplicationStackOverflowHook(TaskHandle_t t, char *name) {
     g_faultCode = 2;
     UsbLog_printf("STACK OVERFLOW: %s\r\n", name ? name : "?");
+    while (1)
+    {
+        vTaskDelay(1000);
+        /* USER CODE BEGIN W1_HardFault_IRQn 0 */
+        /* USER CODE END W1_HardFault_IRQn 0 */
+    }
     // taskDISABLE_INTERRUPTS(); for(;;);
 }
 

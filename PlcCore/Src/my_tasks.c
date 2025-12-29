@@ -38,6 +38,12 @@ static osThreadId_t thPlc;
 static osThreadId_t thComms;
 static osThreadId_t thUartTx;
 static osThreadId_t thInit;
+static osThreadId_t thInit2;
+
+static TaskHandle_t hPlc;
+static TaskHandle_t hComms;
+static TaskHandle_t hUartTx;
+static TaskHandle_t hTcp;
 
 void init_rtos(void) {
     // FreeRTOS buffers оставляем как есть (CMSIS их не заменяет)
@@ -75,21 +81,34 @@ void init_rtos(void) {
 
     const osThreadAttr_t initAttr = {
             .name = "initial",
-            .stack_size = 4096,
+            .stack_size = 8192,
+            .priority = osPriorityNormal
+    };
+
+    const osThreadAttr_t initAttr2 = {
+            .name = "initial",
+            .stack_size = 1024,
             .priority = osPriorityNormal
     };
 
     thPlc = osThreadNew(TaskPlcScan, NULL, &plcAttr);
+    hPlc  = (TaskHandle_t) thPlc;
     CHECK_OK(thPlc != NULL, "Task PLC");
 
     thComms = osThreadNew(TaskComms, NULL, &commsAttr);
+    hComms  = (TaskHandle_t) thComms;
     CHECK_OK(thComms != NULL, "Task COMMS");
 
     thUartTx = osThreadNew(UartTx_Task, NULL, &uartTxAttr);
+    hUartTx  = (TaskHandle_t) thUartTx;
     CHECK_OK(thUartTx != NULL, "Task uart_tx");
 
     thInit = osThreadNew(TaskInitial, NULL, &initAttr);
+    hTcp  = (TaskHandle_t) thInit;
     CHECK_OK(thInit != NULL, "Task initial");
+
+    thInit2 = osThreadNew(TaskInitial2, NULL, &initAttr2);
+    CHECK_OK(thInit2 != NULL, "Task initial");
 
     CHECK_OK(osKernelStart() == osOK, "osKernelStart");
 
@@ -97,25 +116,25 @@ void init_rtos(void) {
     for (;;) {}
 }
 
-static void dbg_phy(void) {
-    uint32_t id1 = 0, id2 = 0, bmsr = 0, pscsr = 0;
-    // g_phyAddr у тебя статик внутри файла, поэтому для простоты прочитай через адрес 0..31 вручную
-    for (uint32_t a = 0; a < 32; a++) {
-        if (ETH_PHY_IO_ReadReg(a, 2, &id1) == 0 && ETH_PHY_IO_ReadReg(a, 3, &id2) == 0) {
-            if (id1 != 0x0000 && id1 != 0xFFFF) {
-                printf("PHY found addr=%lu id1=0x%04lx id2=0x%04lx\r\n", a, id1, id2);
-                ETH_PHY_IO_ReadReg(a, 1, &bmsr);
-                ETH_PHY_IO_ReadReg(a, 1, &bmsr); // второй раз (latched)
-                ETH_PHY_IO_ReadReg(a, 0x1F, &pscsr);
-                printf("BMSR=0x%04lx PSCSR=0x%04lx\r\n", bmsr, pscsr);
-                break;
-            }
-        }
-    }
-
-    int32_t st = eth_phy_get_link_state();
-    printf("eth_phy_get_link_state=%ld\r\n", (long) st);
-}
+//static void dbg_phy(void) {
+//    uint32_t id1 = 0, id2 = 0, bmsr = 0, pscsr = 0;
+//    // g_phyAddr у тебя статик внутри файла, поэтому для простоты прочитай через адрес 0..31 вручную
+//    for (uint32_t a = 0; a < 32; a++) {
+//        if (ETH_PHY_IO_ReadReg(a, 2, &id1) == 0 && ETH_PHY_IO_ReadReg(a, 3, &id2) == 0) {
+//            if (id1 != 0x0000 && id1 != 0xFFFF) {
+//                printf("PHY found addr=%lu id1=0x%04lx id2=0x%04lx\r\n", a, id1, id2);
+//                ETH_PHY_IO_ReadReg(a, 1, &bmsr);
+//                ETH_PHY_IO_ReadReg(a, 1, &bmsr); // второй раз (latched)
+//                ETH_PHY_IO_ReadReg(a, 0x1F, &pscsr);
+//                printf("BMSR=0x%04lx PSCSR=0x%04lx\r\n", bmsr, pscsr);
+//                break;
+//            }
+//        }
+//    }
+//
+//    int32_t st = eth_phy_get_link_state();
+//    printf("eth_phy_get_link_state=%ld\r\n", (long) st);
+//}
 
 extern struct netif gnetif;
 
@@ -135,36 +154,70 @@ static void dbg_mac(void) {
            gnetif.hwaddr[3], gnetif.hwaddr[4], gnetif.hwaddr[5]);
 }
 
-void TaskInitial(void *arg) {
+void TaskInitial2(void *arg) {
     (void) arg;
+    for (;;) {
+        printf("[HWM] PLC=%lu COMMS=%lu UART=%lu TCP=%lu heap=%lu min=%lu\r\n",
+               (unsigned long) uxTaskGetStackHighWaterMark(hPlc)     * sizeof(StackType_t),
+               (unsigned long) uxTaskGetStackHighWaterMark(hComms)   * sizeof(StackType_t),
+               (unsigned long) uxTaskGetStackHighWaterMark(hUartTx)  * sizeof(StackType_t),
+               (unsigned long) uxTaskGetStackHighWaterMark(hTcp)  * sizeof(StackType_t),
+               (unsigned long) xPortGetFreeHeapSize(),
+               (unsigned long) xPortGetMinimumEverFreeHeapSize());
+
+        osDelay(5000);
+    }
+}
+
+void TaskInitial(void *arg)
+{
+    (void)arg;
+
     MX_USB_DEVICE_Init();
-    printf("&gnetif=%p\r\n", (void *) &gnetif);
-    MX_LWIP_Init();
-    PlcCommTcp_Start(5555);
-    for (;;) {
-//        printf("pre\r\n");
-//        MX_LWIP_Process();
-//        printf("post\r\n");
-//        dbg_phy();
-        MX_LWIP_Process();
-        osDelay(1);
+    printf("&gnetif=%p\r\n", (void*)&gnetif);
+
+    MX_LWIP_Init();              // запускает tcpip_thread
+    PlcCommTcp_Start(5555);      // поднимаем сервер
+
+    for (;;)
+    {
+        osDelay(1000);           // НИЧЕГО больше
     }
 }
 
-void TaskPlcScan(void *arg) {
-    (void) arg;
 
-    uint32_t last = osKernelGetTickCount();
+void TaskPlcScan(void *arg)
+{
+    (void)arg;
 
-    for (;;) {
-        plc_tick();
+    uint32_t next = osKernelGetTickCount();
+    uint32_t prevPeriod = 10u;
 
-        // период, например 10мс (подставь свой)
-        const uint32_t period = 10;
-        last += period;
-        osDelayUntil(last);
+    for (;;)
+    {
+        uint32_t period;
+        taskENTER_CRITICAL();
+        period = g_activeGraphValid ? g_activeGraph.cycleMs : 10u;
+        taskEXIT_CRITICAL();
+
+        if (period == 0) period = 10u;        // защита от нуля
+        if (period != prevPeriod) {
+            next = osKernelGetTickCount();    // пересинхронизация
+            prevPeriod = period;
+        }
+
+        uint32_t start = osKernelGetTickCount();
+        plc_tick(start, period);
+        uint32_t end = osKernelGetTickCount();
+
+        plc_metrics_on_cycle(end - start, period);
+
+        next += period;
+        osDelayUntil(next);
     }
 }
+
+
 
 
 void TaskComms(void *arg) {

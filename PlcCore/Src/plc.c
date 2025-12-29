@@ -1,6 +1,8 @@
 #include "plc.h"
 #include "logf.h"
 #include <string.h> // memcpy
+#include "FreeRTOS.h"
+#include "queue.h"
 #include "plc_log.h"
 
 // ===== ЛОГИ PLC =====
@@ -18,7 +20,7 @@
 #endif
 
 #ifndef PLC_LOG_UPLOAD
-#define PLC_LOG_UPLOAD 0     // plc_upload_graph() — факт, размеры, цикл
+#define PLC_LOG_UPLOAD 1     // plc_upload_graph() — факт, размеры, цикл
 #endif
 
 #ifndef PLC_LOG_ACTIVATE
@@ -26,7 +28,7 @@
 #endif
 
 #ifndef PLC_LOG_TICK
-#define PLC_LOG_TICK 0       // хартбит plc_tick() — раз в PLC_TICK_HEARTBEAT_MS
+#define PLC_LOG_TICK 1       // хартбит plc_tick() — раз в PLC_TICK_HEARTBEAT_MS
 #endif
 #ifndef PLC_TICK_HEARTBEAT_MS
 #define PLC_TICK_HEARTBEAT_MS 1000u
@@ -42,7 +44,7 @@
 #define PLC_LOG_DI 1
 #endif
 #ifndef PLC_LOG_AI
-#define PLC_LOG_AI 0
+#define PLC_LOG_AI 1
 #endif
 #ifndef PLC_LOG_AI_DELTA
 #define PLC_LOG_AI_DELTA 16  // сырой ADC: лог при изменении >= 16 ед.
@@ -56,10 +58,10 @@
 #endif
 
 #ifndef PLC_LOG_GRAPH
-#define PLC_LOG_GRAPH 0      // plc_graph_step(): события узлов (по изменениям)
+#define PLC_LOG_GRAPH 1      // plc_graph_step(): события узлов (по изменениям)
 #endif
 #ifndef PLC_PWM_DELTA
-#define PLC_PWM_DELTA 0      // PWM: лог при изменении duty >= 1%
+#define PLC_PWM_DELTA 1      // PWM: лог при изменении duty >= 1%
 #endif
 
 // ---- локальные состояния для подавления лишних логов
@@ -659,11 +661,14 @@ bool plc_release_output(uint16_t nodeIndex)
         return true;
     }
 
-
+    taskENTER_CRITICAL();
+    {
         n->force_en      = false;
         n->flags        &= ~PLC_NODE_FLAG_FORCE;
         n->force_left_ms = 0;
         // force_bool можно не трогать, он больше не используется
+    }
+    taskEXIT_CRITICAL();
 
 #if PLC_LOG_ENABLED && PLC_LOG_CMDS
     LOGT(PLC_LOG_TAG, "release_output: node[%u] OK", (unsigned)nodeIndex);
@@ -680,7 +685,7 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs)
          (unsigned)nodeIndex, (unsigned)value, (unsigned)holdMs);
 #endif
 
-
+    taskENTER_CRITICAL();
     do {
         if (!g_activeGraphValid) {
 #if PLC_LOG_ENABLED && PLC_LOG_CMDS
@@ -719,10 +724,11 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs)
              (unsigned)nodeIndex, (unsigned)n->force_bool, (unsigned)n->force_left_ms);
 #endif
 
-
+        taskEXIT_CRITICAL();
         return true;
     } while (0);
 
+    taskEXIT_CRITICAL();
     return false;
 }
 
@@ -733,31 +739,45 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs)
 // ---- PLC runtime metrics ----
 uint32_t g_scan_cnt = 0;
 uint32_t g_scan_ms_accum = 0;     // сумма длительностей шага (мс)
-uint16_t g_scan_ms_max = 0;       // максимум за период
+uint32_t g_scan_ms_max = 0;       // максимум за период
 uint32_t g_scan_long_steps = 0;   // шагов > g_activeGraph.cycleMs
 
-void plc_tick(void) {
-    static uint32_t lastMs = 0;
-    uint32_t now = now_ms();
-    uint32_t dt = now - lastMs;
-    lastMs = now;
+#define SCAN_STAT_WINDOW 1000u
 
+void plc_metrics_on_cycle(uint32_t execMs, uint32_t periodMs)
+{
     g_scan_cnt++;
-    g_scan_ms_accum += dt;
-    if (dt > g_scan_ms_max) g_scan_ms_max = (uint16_t)dt;
-    if (dt > g_activeGraph.cycleMs) g_scan_long_steps++;
+    g_scan_ms_accum += execMs;
+    if (execMs > g_scan_ms_max) g_scan_ms_max = (uint16_t)execMs;
+    if (execMs > periodMs) g_scan_long_steps++;
+
+    if (g_scan_cnt >= SCAN_STAT_WINDOW) {
+        // можно сохранить lastAvg отдельно, а тут сбросить
+        g_scan_cnt = 0;
+        g_scan_ms_accum = 0;
+        g_scan_ms_max = 0;
+        // g_scan_long_steps либо тоже сбрасывать (overruns за окно),
+        // либо оставить как "всего" — реши что удобнее.
+    }
+}
+
+void plc_tick(uint32_t nowMs, uint32_t periodMs) {
+    uint32_t dt = periodMs;
     // 1) активация нового графа
     if (g_needSwapGraph && g_stagingGraphValid) {
-
+        taskENTER_CRITICAL();
+        {
             g_activeGraph = g_stagingGraph;
             g_activeGraphValid = true;
             g_needSwapGraph = false;
-
+            plc_graph_reset_runtime(&g_activeGraph);
+        }
+        taskEXIT_CRITICAL();
 
         // СБРОС ВСЕХ ВЫХОДОВ
         plc_hw_reset_outputs();
 
-        plc_graph_reset_runtime(&g_activeGraph);
+
 
 #if PLC_LOG_ENABLED && PLC_LOG_ACTIVATE
         LOGT(PLC_LOG_TAG, "activate: swapped (nodes=%u, cycleMs=%u)",
@@ -897,7 +917,7 @@ void plc_refresh_inputs_hw(PlcGraph *g) {
 
 void plc_apply_pending_cmds(PlcGraph *g, uint32_t dt_ms)
 {
-
+    taskENTER_CRITICAL();
     for (uint16_t i = 0; i < g->nodeCount; i++) {
         PlcNode *n = &g->nodes[i];
 
@@ -920,6 +940,7 @@ void plc_apply_pending_cmds(PlcGraph *g, uint32_t dt_ms)
             }
         }
     }
+    taskEXIT_CRITICAL();
 }
 
 static inline float get_float(const PlcNode *n) {

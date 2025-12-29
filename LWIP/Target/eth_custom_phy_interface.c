@@ -1,66 +1,78 @@
 #include "eth_custom_phy_interface.h"
-#include "ethernetif.h"   // тут обычно объявлены ETH_PHY_IO_* функции
-#include <stdint.h>
+#include "main.h"
 
-/* Clause 22 стандартные регистры */
-#define PHY_REG_BMCR     0x00u
-#define PHY_REG_BMSR     0x01u
-#define PHY_REG_PHYID1   0x02u
-#define PHY_REG_PHYID2   0x03u
+/*
+ * Эти функции уже реализованы в твоём ethernetif.c (CubeMX):
+ *  - ETH_PHY_IO_Init()
+ *  - ETH_PHY_IO_ReadReg()
+ *  - ETH_PHY_IO_WriteReg()
+ *  - ETH_PHY_IO_GetTick()
+ */
+extern int32_t ETH_PHY_IO_Init(void);
+extern int32_t ETH_PHY_IO_ReadReg(uint32_t DevAddr, uint32_t RegAddr, uint32_t *pRegVal);
+extern int32_t ETH_PHY_IO_WriteReg(uint32_t DevAddr, uint32_t RegAddr, uint32_t RegVal);
+extern uint32_t ETH_PHY_IO_GetTick(void);
 
-/* LAN8720: PHY Special Control/Status (PSCSR) = 0x1F */
-#define LAN8720_REG_PSCSR 0x1Fu
+/* Standard IEEE PHY registers */
+#define PHY_BMCR                (0x00U)  /* Basic Mode Control Register */
+#define PHY_BMSR                (0x01U)  /* Basic Mode Status Register */
+#define PHY_ID1                 (0x02U)  /* PHY Identifier 1 */
+#define PHY_ID2                 (0x03U)  /* PHY Identifier 2 */
+#define PHY_ANAR                (0x04U)  /* Auto-Negotiation Advertisement */
+#define PHY_ANLPAR              (0x05U)  /* Auto-Negotiation Link Partner Ability */
 
 /* BMCR bits */
-#define BMCR_RESET       (1u << 15)
-#define BMCR_AN_EN       (1u << 12)
-#define BMCR_RESTART_AN  (1u << 9)
+#define BMCR_RESET              (1U << 15)
+#define BMCR_AUTONEG_ENABLE     (1U << 12)
+#define BMCR_RESTART_AUTONEG    (1U << 9)
+#define BMCR_DUPLEX_MODE        (1U << 8)
+#define BMCR_SPEED_SELECT       (1U << 13) /* 1=100M, 0=10M */
 
 /* BMSR bits */
-#define BMSR_LINK_STATUS (1u << 2)
-#define BMSR_AN_COMPLETE (1u << 5)
+#define BMSR_LINK_STATUS        (1U << 2)
+#define BMSR_AUTONEG_COMPLETE   (1U << 5)
 
-/* PSCSR HCDSPEED field (как у Oryx для LAN8720) */
-#define PSCSR_HCDSPEED_MASK        0x001Cu
-#define PSCSR_10BT_HD              0x0004u
-#define PSCSR_100BTX_HD            0x0008u
-#define PSCSR_10BT_FD              0x0014u
-#define PSCSR_100BTX_FD            0x0018u
+/* ANAR/ANLPAR ability bits */
+#define AN_10HALF               (1U << 5)
+#define AN_10FULL               (1U << 6)
+#define AN_100HALF              (1U << 7)
+#define AN_100FULL              (1U << 8)
 
-/* Если ты не уверен в PHY адресе — включи автоскан */
-#define PHY_ADDR_AUTOSCAN 1
+/* Timeouts */
+#define PHY_RESET_TIMEOUT_MS    (200U)
+#define PHY_AN_TIMEOUT_MS       (4000U)
 
-static uint32_t g_phyAddr = 0xFFFFFFFFu;
+/* Cached PHY address found by scan */
+static uint32_t s_phyAddr = 0xFFFFFFFFU;
 
-static int phy_read(uint32_t addr, uint32_t reg, uint32_t *val)
+static int32_t phy_read(uint32_t reg, uint32_t *val)
 {
-    return (ETH_PHY_IO_ReadReg(addr, reg, val) == 0) ? 0 : -1;
+    if (s_phyAddr == 0xFFFFFFFFU) return -1;
+    return ETH_PHY_IO_ReadReg(s_phyAddr, reg, val);
 }
 
-static int phy_write(uint32_t addr, uint32_t reg, uint32_t val)
+static int32_t phy_write(uint32_t reg, uint32_t val)
 {
-    return (ETH_PHY_IO_WriteReg(addr, reg, val) == 0) ? 0 : -1;
+    if (s_phyAddr == 0xFFFFFFFFU) return -1;
+    return ETH_PHY_IO_WriteReg(s_phyAddr, reg, val);
 }
 
-static uint32_t ms_now(void)
+/* Try to find a PHY on MDIO bus by scanning PHYID registers */
+static int32_t phy_find_address(uint32_t *outAddr)
 {
-    return (uint32_t)ETH_PHY_IO_GetTick();
-}
+    uint32_t id1 = 0, id2 = 0;
 
-static int scan_phy_addr(uint32_t *outAddr)
-{
-    for (uint32_t a = 0; a < 32; a++)
+    for (uint32_t addr = 0; addr < 32U; addr++)
     {
-        uint32_t id1 = 0, id2 = 0;
-        if (phy_read(a, PHY_REG_PHYID1, &id1) == 0 &&
-            phy_read(a, PHY_REG_PHYID2, &id2) == 0)
-        {
-            if (id1 != 0x0000u && id1 != 0xFFFFu)
-            {
-                *outAddr = a;
-                return 0;
-            }
-        }
+        if (ETH_PHY_IO_ReadReg(addr, PHY_ID1, &id1) != 0) continue;
+        if (ETH_PHY_IO_ReadReg(addr, PHY_ID2, &id2) != 0) continue;
+
+        /* Filter out invalid "no device" reads */
+        if (id1 == 0x0000U || id1 == 0xFFFFU) continue;
+        if (id2 == 0x0000U || id2 == 0xFFFFU) continue;
+
+        *outAddr = addr;
+        return 0;
     }
     return -1;
 }
@@ -68,61 +80,164 @@ static int scan_phy_addr(uint32_t *outAddr)
 int32_t eth_phy_init(void)
 {
     if (ETH_PHY_IO_Init() != 0)
-        return -1;
-
-#if PHY_ADDR_AUTOSCAN
-    if (scan_phy_addr(&g_phyAddr) != 0)
-        return -1;
-#else
-    /* Если хочешь фиксированный адрес — задай тут (обычно 0 или 1) */
-  g_phyAddr = 0;
-#endif
-
-    /* Soft reset */
-    uint32_t bmcr = 0;
-    if (phy_read(g_phyAddr, PHY_REG_BMCR, &bmcr) != 0) return -1;
-    if (phy_write(g_phyAddr, PHY_REG_BMCR, bmcr | BMCR_RESET) != 0) return -1;
-
-    uint32_t t0 = ms_now();
-    while (1)
     {
-        if (phy_read(g_phyAddr, PHY_REG_BMCR, &bmcr) != 0) return -1;
-        if ((bmcr & BMCR_RESET) == 0) break;
-        if ((ms_now() - t0) > 500u) return -1;
+        return -1;
+    }
+
+    if (s_phyAddr == 0xFFFFFFFFU)
+    {
+        uint32_t found = 0;
+        if (phy_find_address(&found) != 0)
+        {
+            return -1; /* No PHY detected */
+        }
+        s_phyAddr = found;
+    }
+
+    /* Reset PHY */
+    uint32_t bmcr = 0;
+    if (phy_read(PHY_BMCR, &bmcr) != 0)
+    {
+        return -1;
+    }
+
+    if (phy_write(PHY_BMCR, bmcr | BMCR_RESET) != 0)
+    {
+        return -1;
+    }
+
+    uint32_t t0 = ETH_PHY_IO_GetTick();
+    do
+    {
+        if (phy_read(PHY_BMCR, &bmcr) != 0)
+        {
+            return -1;
+        }
+        if ((bmcr & BMCR_RESET) == 0U)
+        {
+            break;
+        }
+    } while ((ETH_PHY_IO_GetTick() - t0) < PHY_RESET_TIMEOUT_MS);
+
+    if ((bmcr & BMCR_RESET) != 0U)
+    {
+        return -1; /* Reset timeout */
     }
 
     /* Enable autoneg + restart */
-    if (phy_read(g_phyAddr, PHY_REG_BMCR, &bmcr) != 0) return -1;
-    bmcr |= (BMCR_AN_EN | BMCR_RESTART_AN);
-    if (phy_write(g_phyAddr, PHY_REG_BMCR, bmcr) != 0) return -1;
+    if (phy_read(PHY_BMCR, &bmcr) != 0)
+    {
+        return -1;
+    }
+    bmcr |= (BMCR_AUTONEG_ENABLE | BMCR_RESTART_AUTONEG);
+    if (phy_write(PHY_BMCR, bmcr) != 0)
+    {
+        return -1;
+    }
+
+    /*
+     * Важно:
+     * Не ждём здесь линк/AN до конца жёстко — этим занимается ethernet_link_thread().
+     * Но мягко подождём чуть-чуть AN complete, чтобы первые секунды были стабильнее.
+     */
+    uint32_t bmsr = 0;
+    t0 = ETH_PHY_IO_GetTick();
+    do
+    {
+        if (phy_read(PHY_BMSR, &bmsr) != 0) break;
+        /* read twice for latched bits correctness */
+        (void)phy_read(PHY_BMSR, &bmsr);
+
+        if ((bmsr & BMSR_AUTONEG_COMPLETE) != 0U)
+        {
+            break;
+        }
+    } while ((ETH_PHY_IO_GetTick() - t0) < PHY_AN_TIMEOUT_MS);
 
     return 0;
 }
 
 int32_t eth_phy_get_link_state(void)
 {
-    if (g_phyAddr == 0xFFFFFFFFu)
-        return ETH_PHY_STATUS_LINK_ERROR;
-
-    uint32_t bmsr1 = 0, bmsr2 = 0;
-
-    /* ВАЖНО: BMSR читаем два раза (latched) — как в Oryx :contentReference[oaicite:4]{index=4} */
-    if (phy_read(g_phyAddr, PHY_REG_BMSR, &bmsr1) != 0) return ETH_PHY_STATUS_LINK_ERROR;
-    if (phy_read(g_phyAddr, PHY_REG_BMSR, &bmsr2) != 0) return ETH_PHY_STATUS_LINK_ERROR;
-
-    if ((bmsr2 & BMSR_LINK_STATUS) == 0)
-        return ETH_PHY_STATUS_LINK_DOWN;
-
-    uint32_t pscsr = 0;
-    if (phy_read(g_phyAddr, LAN8720_REG_PSCSR, &pscsr) != 0)
-        return ETH_PHY_STATUS_LINK_ERROR;
-
-    switch (pscsr & PSCSR_HCDSPEED_MASK)
+    if (s_phyAddr == 0xFFFFFFFFU)
     {
-        case PSCSR_100BTX_FD: return ETH_PHY_STATUS_100MBITS_FULLDUPLEX;
-        case PSCSR_100BTX_HD: return ETH_PHY_STATUS_100MBITS_HALFDUPLEX;
-        case PSCSR_10BT_FD:   return ETH_PHY_STATUS_10MBITS_FULLDUPLEX;
-        case PSCSR_10BT_HD:   return ETH_PHY_STATUS_10MBITS_HALFDUPLEX;
-        default:              return ETH_PHY_STATUS_AUTONEGO_NOT_DONE;
+        /* If someone calls before init, try minimal detection */
+        uint32_t found = 0;
+        if (phy_find_address(&found) != 0)
+        {
+            return ETH_PHY_STATUS_LINK_ERROR;
+        }
+        s_phyAddr = found;
+    }
+
+    uint32_t bmsr = 0;
+    if (phy_read(PHY_BMSR, &bmsr) != 0)
+    {
+        return ETH_PHY_STATUS_LINK_ERROR;
+    }
+    /* read twice (BMSR link can be latched) */
+    if (phy_read(PHY_BMSR, &bmsr) != 0)
+    {
+        return ETH_PHY_STATUS_LINK_ERROR;
+    }
+
+    if ((bmsr & BMSR_LINK_STATUS) == 0U)
+    {
+        return ETH_PHY_STATUS_LINK_DOWN;
+    }
+
+    uint32_t bmcr = 0;
+    if (phy_read(PHY_BMCR, &bmcr) != 0)
+    {
+        return ETH_PHY_STATUS_LINK_ERROR;
+    }
+
+    const uint32_t autoneg = (bmcr & BMCR_AUTONEG_ENABLE);
+
+    if (autoneg != 0U)
+    {
+        if ((bmsr & BMSR_AUTONEG_COMPLETE) == 0U)
+        {
+            return ETH_PHY_STATUS_AUTONEGO_NOT_DONE;
+        }
+
+        uint32_t anar = 0, anlpar = 0;
+        if (phy_read(PHY_ANAR, &anar) != 0)   return ETH_PHY_STATUS_LINK_ERROR;
+        if (phy_read(PHY_ANLPAR, &anlpar) != 0) return ETH_PHY_STATUS_LINK_ERROR;
+
+        uint32_t common = (anar & anlpar);
+
+        /* Highest priority first */
+        if ((common & AN_100FULL) != 0U) return ETH_PHY_STATUS_100MBITS_FULLDUPLEX;
+        if ((common & AN_100HALF) != 0U) return ETH_PHY_STATUS_100MBITS_HALFDUPLEX;
+        if ((common & AN_10FULL)  != 0U) return ETH_PHY_STATUS_10MBITS_FULLDUPLEX;
+        if ((common & AN_10HALF)  != 0U) return ETH_PHY_STATUS_10MBITS_HALFDUPLEX;
+
+        /* If common is empty (редко, но бывает), fallback to BMCR forced bits */
+        uint32_t speed100 = (bmcr & BMCR_SPEED_SELECT);
+        uint32_t duplex   = (bmcr & BMCR_DUPLEX_MODE);
+        if (speed100 != 0U)
+        {
+            return (duplex != 0U) ? ETH_PHY_STATUS_100MBITS_FULLDUPLEX : ETH_PHY_STATUS_100MBITS_HALFDUPLEX;
+        }
+        else
+        {
+            return (duplex != 0U) ? ETH_PHY_STATUS_10MBITS_FULLDUPLEX : ETH_PHY_STATUS_10MBITS_HALFDUPLEX;
+        }
+    }
+    else
+    {
+        /* Forced mode (no autoneg) */
+        uint32_t speed100 = (bmcr & BMCR_SPEED_SELECT);
+        uint32_t duplex   = (bmcr & BMCR_DUPLEX_MODE);
+
+        if (speed100 != 0U)
+        {
+            return (duplex != 0U) ? ETH_PHY_STATUS_100MBITS_FULLDUPLEX : ETH_PHY_STATUS_100MBITS_HALFDUPLEX;
+        }
+        else
+        {
+            return (duplex != 0U) ? ETH_PHY_STATUS_10MBITS_FULLDUPLEX : ETH_PHY_STATUS_10MBITS_HALFDUPLEX;
+        }
     }
 }

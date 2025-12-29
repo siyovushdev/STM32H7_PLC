@@ -49,45 +49,11 @@ MEMORY
   RAM_D2 (xrw)   : ORIGIN = 0x30000000, LENGTH = 288K
   RAM_D3 (xrw)   : ORIGIN = 0x38000000, LENGTH = 64K
   ITCMRAM (xrw)  : ORIGIN = 0x00000000, LENGTH = 64K
-  D2_DMA (xrw)   : ORIGIN = 0x30040000, LENGTH = 32K
 }
 
 /* Define output sections */
 SECTIONS
 {
-.tcp_buf (NOLOAD) :
-{
-  . = ALIGN(32);
-  *(.tcp_buf)
-  . = ALIGN(32);
-} >RAM_D1
-.RxDecripSection (NOLOAD) :
-{
-  . = ALIGN(32);
-  *(.RxDecripSection)
-  . = ALIGN(32);
-} >RAM_D2
-
-.TxDecripSection (NOLOAD) :
-{
-  . = ALIGN(32);
-  *(.TxDecripSection)
-  . = ALIGN(32);
-} >RAM_D2
-
-.Rx_PoolSection (NOLOAD) :
-{
-  . = ALIGN(32);
-  *(.Rx_PoolSection)
-  . = ALIGN(32);
-} >RAM_D2
-    .eth_dma (NOLOAD) :
-    {
-      . = ALIGN(32);
-      *(.eth_dma)
-      . = ALIGN(32);
-    } >RAM_D2
-
     .dma_buf (NOLOAD) :
         {
           . = ALIGN(32);
@@ -95,6 +61,19 @@ SECTIONS
           *(.dma_buf*)
           . = ALIGN(32);
         } > D2_DMA
+     /* Modification start */
+      .lwip_sec (NOLOAD) :
+      {
+        . = ABSOLUTE(0x30040000);
+        *(.RxDecripSection)
+
+        . = ABSOLUTE(0x30040060);
+        *(.TxDecripSection)
+
+        . = ABSOLUTE(0x30040200);
+        *(.Rx_PoolSection)
+      } >RAM_D2
+      /* Modification end */
   /* The startup code goes first into FLASH */
   .isr_vector :
   {

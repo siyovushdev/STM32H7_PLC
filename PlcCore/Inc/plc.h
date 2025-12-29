@@ -13,7 +13,7 @@ extern "C" {
 extern volatile uint32_t g_adcRaw[4];
 
 /* ================== Константы и типы ================== */
-#define PLC_MAX_NODES 40          // подбери под свою память
+#define PLC_MAX_NODES 100          // подбери под свою память
 #define PLC_CYCLE_MS_MIN 5        // защита от слишком частого цикла
 #define PLC_CYCLE_MS_MAX 100      // защита от слишком редкого цикла
 
@@ -232,7 +232,9 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs);
 bool plc_release_output(uint16_t nodeIndex);
 
 // основной тик ПЛК, вызывается TaskPlcScan в цикле
-void plc_tick(void);
+void plc_tick(uint32_t nowMs, uint32_t periodMs);
+
+void plc_metrics_on_cycle(uint32_t execMs, uint32_t periodMs);
 
 // сервисные куски (ниже будут реализованы в plc.c)
 void plc_refresh_inputs_hw(PlcGraph* g);
@@ -268,6 +270,8 @@ void UartTx_Task(void *arg);  // создать один раз
 void TaskComms(void* arg);
 
 void TaskInitial(void* arg);
+
+void TaskInitial2(void* arg);
 
 /* Функция init_rtos() вызывается из main.c
    после HAL_Init, настройки GPIO/UART/ADC/TIM/IWDG:

@@ -88,17 +88,38 @@ void NMI_Handler(void)
 /**
   * @brief This function handles Hard fault interrupt.
   */
-void HardFault_Handler(void)
+static volatile uint32_t hf_pc, hf_lr, hf_cfsr, hf_hfsr, hf_dfsr, hf_afsr, hf_bfar, hf_mmfar;
+
+__attribute__((naked)) void HardFault_Handler(void)
 {
-  /* USER CODE BEGIN HardFault_IRQn 0 */
-//
-  /* USER CODE END HardFault_IRQn 0 */
-  while (1)
-  {
-    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
-    /* USER CODE END W1_HardFault_IRQn 0 */
-  }
+    __asm volatile(
+            "tst lr, #4       \n"
+            "ite eq           \n"
+            "mrseq r0, msp    \n"
+            "mrsne r0, psp    \n"
+            "b hardfault_c    \n"
+            );
 }
+
+void hardfault_c(uint32_t *sp)
+{
+    hf_lr   = sp[5];
+    hf_pc   = sp[6];
+
+    hf_cfsr  = SCB->CFSR;
+    hf_hfsr  = SCB->HFSR;
+    hf_dfsr  = SCB->DFSR;
+    hf_afsr  = SCB->AFSR;
+    hf_bfar  = SCB->BFAR;
+    hf_mmfar = SCB->MMFAR;
+
+    // ВАЖНО: в HardFault лучше НЕ печатать много.
+    // Если хочешь — одна строка:
+    // printf("HF pc=%08lx lr=%08lx cfsr=%08lx bfar=%08lx mmfar=%08lx\r\n", hf_pc, hf_lr, hf_cfsr, hf_bfar, hf_mmfar);
+
+    while (1) {}
+}
+
 
 /**
   * @brief This function handles Memory management fault.

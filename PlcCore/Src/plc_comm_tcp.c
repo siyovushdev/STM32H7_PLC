@@ -36,7 +36,7 @@
 #endif
 
 // статический буфер (один клиент)
-__attribute__((section(".tcp_buf"), aligned(32)))
+__attribute__((aligned(32)))
 static uint8_t s_tcp_ring[PLC_TCP_RING_CAP];
 
 // ===== CRC16 (MODBUS) по [len_lo,len_hi] + payload =====
@@ -163,23 +163,28 @@ static err_t send_frame(struct netconn *c, const uint8_t *payload, uint16_t plen
 // ===== Frame parsing =====
 static bool process_frames(struct netconn *c, Ring *q)
 {
-    while (1) {
+    // Ограничиваем работу за один приём netbuf, чтобы не душить другие задачи (USB log, lwIP и т.д.)
+    for (uint32_t frames = 0; frames < PLC_TCP_MAX_FRAMES_PER_PUMP; frames++) {
+
         if (ring_used(q) < 2u) return true;
 
         uint16_t plen = (uint16_t)(ring_peek(q, 0) | ((uint16_t)ring_peek(q, 1) << 8));
 
         // защита от мусора/рассинхрона
         if (plen == 0 || plen > PLC_TCP_MAX_PAYLOAD) {
-            ring_drop(q, 1);
-            continue;
+            // Не ресинхронимся по 1 байту — это может увести задачу в 100% CPU.
+            // Сбрасываем накопленное и возвращаемся ждать новый нормальный кадр.
+            ring_drop(q, ring_used(q));
+            return true;
         }
 
         uint32_t need = 2u + (uint32_t)plen;
         if (ring_used(q) < need) return true;
 
-        // снимаем len
-        ring_drop(q, 2);
+        // снять len
+        ring_drop(q, 2u);
 
+        // payload
         uint8_t *payload = (uint8_t*)pvPortMalloc(plen);
         if (!payload) {
             LOGT(TAG, "NO HEAP for payload plen=%u", (unsigned)plen);
@@ -187,10 +192,9 @@ static bool process_frames(struct netconn *c, Ring *q)
             ring_drop(q, plen);
             return false;
         }
-
         ring_read(q, payload, plen);
 
-        // ===== CBOR обработка (твой существующий код) =====
+        // ===== CBOR обработка =====
         CborReply reply;
         reply.len = 0;
         on_cbor_frame_received(payload, (size_t)plen, &reply);
@@ -205,11 +209,13 @@ static bool process_frames(struct netconn *c, Ring *q)
             err_t e = send_frame(c, reply.data, (uint16_t)reply.len);
             if (e != ERR_OK) {
                 LOGT(TAG, "send_frame err=%d", (int)e);
-                return false; // оборвём соединение
+                return false;
             }
         }
     }
+    return true;
 }
+
 
 // ===== Client service =====
 static void serve_client(struct netconn *c)
@@ -226,7 +232,8 @@ static void serve_client(struct netconn *c)
         err_t e = netconn_recv(c, &nb);
 
         if (e == ERR_TIMEOUT) {
-            // таймаут – это норма, просто продолжаем
+            // таймаут – это норма
+            if (nb) { netbuf_delete(nb); nb = NULL; }
             continue;
         }
 
