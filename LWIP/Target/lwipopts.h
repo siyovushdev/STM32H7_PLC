@@ -114,6 +114,7 @@ extern "C" {
 /*----- Value in opt.h for CHECKSUM_CHECK_ICMP6: 1 -----*/
 #define CHECKSUM_CHECK_ICMP6 0
 #define LWIP_SO_RCVTIMEO 1
+#define LWIP_NETIF_STATUS_CALLBACK 1
 
 
 /*-----------------------------------------------------------------------------*/

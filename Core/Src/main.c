@@ -243,7 +243,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-//  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
 //  /* creation of plc_scan_task */
 //  plc_scan_taskHandle = osThreadNew(PlcScanTask, NULL, &plc_scan_task_attributes);
@@ -769,7 +769,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = DI7_Pin|DI0_Pin|DI1_Pin|DI2_Pin
                           |DI4_Pin|DI5_Pin|DI6_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PD4 */

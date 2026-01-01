@@ -36,6 +36,8 @@ extern volatile uint32_t g_adcRaw[4];
 #define PLC_PWM_DEADBAND_ON_PCT    3   // включать только если >=3%
 #endif
 
+#define PLC_RESET_MEM_ON_ACTIVATE 0
+
 typedef enum {
     PLC_VAL_BOOL  = 0,  // Логическое значение: 0 или 1 (дискретные сигналы, кнопки, реле, флаги)
     PLC_VAL_INT   = 1,  // Целое число (обычно 32-битное): используется для счётчиков, порогов, параметров
@@ -58,21 +60,21 @@ typedef enum {
     PLC_NODE_AI_IN      = 12, // Аналоговый вход (чтение АЦП, датчиков, потенциометров)
     PLC_NODE_COMPARE_GT = 13, // Сравнение "БОЛЬШЕ" (A > B)
     PLC_NODE_COMPARE_LT = 14, // Сравнение "МЕНЬШЕ" (A < B)
-    PLC_NODE_PWM_OUT    = 15,  // ШИМ-выход (PWM): формирование аналогового сигнала по коэффициенту заполнения
-    PLC_NODE_MUX2       = 16,   // селектор: out = sel ? inA : inB; sel берём из node[paramInt]
+    PLC_NODE_PWM_OUT    = 15, // ШИМ-выход (PWM): формирование аналогового сигнала по коэффициенту заполнения
+    PLC_NODE_MUX2       = 16, // селектор: out = sel ? inA : inB; sel берём из node[paramInt]
     PLC_NODE_TP         = 17, // одноимпульсный таймер: фронт inA -> импульс paramMs
     PLC_NODE_HYST       = 18, // гистерезис: inA(float)->bool; центр=paramFloat; ширина=paramInt/1000
     PLC_NODE_SCALE      = 19, // y=a*x+b; a=paramFloat; b=paramInt/1000
     PLC_NODE_ADD        = 20, // out = inA + inB (float)
-    PLC_NODE_LIMIT      = 21,  // clamp: min=paramInt/1000; max=paramMs/1000
+    PLC_NODE_LIMIT      = 21, // clamp: min=paramInt/1000; max=paramMs/1000
     PLC_NODE_PID        = 22,
-    PLC_NODE_ANALOG_AVG = 23,  // сглаживание: y += alpha*(x - y); alpha = paramInt/1000
-    PLC_NODE_RAMP       = 24,   // ограничение скорости: |y - prev| <= rate*dt; rate = paramInt/1000 ед/с
-    PLC_NODE_LOG        = 25,  // лог: периодически пишет значение входа в plc_log
-    PLC_NODE_AO         = 26,  // Аналоговый выход (0..100%) -> ШИМ/DAC по номеру канала
-    PLC_NODE_CTU        = 27,  // Счётчик вверх: inA=CLK, inB=RST, paramInt=PV (preset)
-    PLC_NODE_CTD        = 28,  // Счётчик вниз: фронт inA (CLK) -> acc--, inB (RST) загружает preset из paramInt
-    PLC_NODE_CTUD       = 29,  // Счётчик вверх/вниз: inA = CU, inB = CD (пульсы); out.i = acc
+    PLC_NODE_ANALOG_AVG = 23, // сглаживание: y += alpha*(x - y); alpha = paramInt/1000
+    PLC_NODE_RAMP       = 24, // ограничение скорости: |y - prev| <= rate*dt; rate = paramInt/1000 ед/с
+    PLC_NODE_LOG        = 25, // лог: периодически пишет значение входа в plc_log
+    PLC_NODE_AO         = 26, // Аналоговый выход (0..100%) -> ШИМ/DAC по номеру канала
+    PLC_NODE_CTU        = 27, // Счётчик вверх: inA=CLK, inB=RST, paramInt=PV (preset)
+    PLC_NODE_CTD        = 28, // Счётчик вниз: фронт inA (CLK) -> acc--, inB (RST) загружает preset из paramInt
+    PLC_NODE_CTUD       = 29, // Счётчик вверх/вниз: inA = CU, inB = CD (пульсы); out.i = acc
     PLC_NODE_WINDOW_CHECK = 30, // Проверка диапазона: MIN..MAX вокруг paramFloat (центр), ширина paramInt/1000
     PLC_NODE_SAFE_OUTPUT  = 31, // Безопасный выход: нормальное управление + безопасное состояние при аварии
     PLC_NODE_ALARM_GEN    = 32, // Генерация аварийного флага (обёртка над условием)
@@ -86,10 +88,7 @@ typedef enum {
     PLC_NODE_FILTER_AVG   = 38, // Экспоненциальный фильтр: сглаживание аналогового сигнала
     PLC_NODE_MATH_OP      = 39, // Базовые операции: +, -, *, / над двумя входами
     PLC_NODE_CONST_FLOAT  = 40,  // константа float (уставки, коэффициенты)
-
-
-
-
+    PLC_NODE_COMPARE_GE   = 41, // A >= B
 } PlcNodeType;
 
 // --- Доступ к памяти ПЛК (глобальные регистры) ---
@@ -101,6 +100,9 @@ int32_t  plc_mem_get_int(uint16_t index);
 
 void     plc_mem_set_real(uint16_t index, float value);
 float    plc_mem_get_real(uint16_t index);
+
+void plc_mem_reset_all(void);
+void plc_mem_init(void);
 
 // ──────────────────────────────────────────────────────────────
 // Флаг для поля flags (битовые настройки узла)
@@ -232,12 +234,12 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs);
 bool plc_release_output(uint16_t nodeIndex);
 
 // основной тик ПЛК, вызывается TaskPlcScan в цикле
-void plc_tick(uint32_t nowMs, uint32_t periodMs);
+void plc_tick(uint32_t nowMs);
 
 void plc_metrics_on_cycle(uint32_t execMs, uint32_t periodMs);
 
 // сервисные куски (ниже будут реализованы в plc.c)
-void plc_refresh_inputs_hw(PlcGraph* g);
+void plc_refresh_inputs_hw(uint32_t nowMs, PlcGraph *g);
 void plc_apply_pending_cmds(PlcGraph* g, uint32_t dt_ms);
 void plc_graph_step(PlcGraph* g, uint32_t dt_ms);
 

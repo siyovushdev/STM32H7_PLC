@@ -1,8 +1,6 @@
 #include "plc.h"
 #include "logf.h"
 #include <string.h> // memcpy
-#include "FreeRTOS.h"
-#include "queue.h"
 #include "plc_log.h"
 
 // ===== ЛОГИ PLC =====
@@ -28,7 +26,7 @@
 #endif
 
 #ifndef PLC_LOG_TICK
-#define PLC_LOG_TICK 1       // хартбит plc_tick() — раз в PLC_TICK_HEARTBEAT_MS
+#define PLC_LOG_TICK 0       // хартбит plc_tick() — раз в PLC_TICK_HEARTBEAT_MS
 #endif
 #ifndef PLC_TICK_HEARTBEAT_MS
 #define PLC_TICK_HEARTBEAT_MS 1000u
@@ -41,10 +39,10 @@
 #define PLC_LOG_INPUTS 1     // plc_refresh_inputs_hw(): DI/AI
 #endif
 #ifndef PLC_LOG_DI
-#define PLC_LOG_DI 1
+#define PLC_LOG_DI 0
 #endif
 #ifndef PLC_LOG_AI
-#define PLC_LOG_AI 1
+#define PLC_LOG_AI 0
 #endif
 #ifndef PLC_LOG_AI_DELTA
 #define PLC_LOG_AI_DELTA 16  // сырой ADC: лог при изменении >= 16 ед.
@@ -61,7 +59,7 @@
 #define PLC_LOG_GRAPH 1      // plc_graph_step(): события узлов (по изменениям)
 #endif
 #ifndef PLC_PWM_DELTA
-#define PLC_PWM_DELTA 1      // PWM: лог при изменении duty >= 1%
+#define PLC_PWM_DELTA 0      // PWM: лог при изменении duty >= 1%
 #endif
 
 // ---- локальные состояния для подавления лишних логов
@@ -108,7 +106,8 @@ typedef struct {
     bool inited;
 } DiFilterState;
 
-static DiFilterState di_filter[PLC_MAX_NODES];
+#define PLC_HW_DI_COUNT 8
+static DiFilterState di_filter[PLC_HW_DI_COUNT]; //DI 8шт
 static const uint32_t DI_DEBOUNCE_DEFAULT_MS = 30; // по умолчанию 30 мс
 
 /* ================== Внутренние хелперы ================== */
@@ -222,6 +221,7 @@ bool plc_validate_graph(PlcGraph *g) {
                 // Узлы, требующие два входа
             case PLC_NODE_AND2:
             case PLC_NODE_OR2:
+            case PLC_NODE_COMPARE_GE:
                 if (n->inA < 0 || n->inB < 0) {
                     LOGT("PLC", "node[%u] type=%u requires inA>=0 and inB>=0", i, (unsigned) n->type);
                     return false;
@@ -661,14 +661,12 @@ bool plc_release_output(uint16_t nodeIndex)
         return true;
     }
 
-    taskENTER_CRITICAL();
-    {
+
         n->force_en      = false;
         n->flags        &= ~PLC_NODE_FLAG_FORCE;
         n->force_left_ms = 0;
         // force_bool можно не трогать, он больше не используется
-    }
-    taskEXIT_CRITICAL();
+
 
 #if PLC_LOG_ENABLED && PLC_LOG_CMDS
     LOGT(PLC_LOG_TAG, "release_output: node[%u] OK", (unsigned)nodeIndex);
@@ -685,7 +683,7 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs)
          (unsigned)nodeIndex, (unsigned)value, (unsigned)holdMs);
 #endif
 
-    taskENTER_CRITICAL();
+
     do {
         if (!g_activeGraphValid) {
 #if PLC_LOG_ENABLED && PLC_LOG_CMDS
@@ -724,11 +722,11 @@ bool plc_force_output(uint16_t nodeIndex, bool value, uint32_t holdMs)
              (unsigned)nodeIndex, (unsigned)n->force_bool, (unsigned)n->force_left_ms);
 #endif
 
-        taskEXIT_CRITICAL();
+
         return true;
     } while (0);
 
-    taskEXIT_CRITICAL();
+
     return false;
 }
 
@@ -748,7 +746,7 @@ void plc_metrics_on_cycle(uint32_t execMs, uint32_t periodMs)
 {
     g_scan_cnt++;
     g_scan_ms_accum += execMs;
-    if (execMs > g_scan_ms_max) g_scan_ms_max = (uint16_t)execMs;
+    if (execMs > g_scan_ms_max) g_scan_ms_max = execMs;
     if (execMs > periodMs) g_scan_long_steps++;
 
     if (g_scan_cnt >= SCAN_STAT_WINDOW) {
@@ -756,23 +754,53 @@ void plc_metrics_on_cycle(uint32_t execMs, uint32_t periodMs)
         g_scan_cnt = 0;
         g_scan_ms_accum = 0;
         g_scan_ms_max = 0;
-        // g_scan_long_steps либо тоже сбрасывать (overruns за окно),
-        // либо оставить как "всего" — реши что удобнее.
     }
 }
 
-void plc_tick(uint32_t nowMs, uint32_t periodMs) {
-    uint32_t dt = periodMs;
+static uint32_t s_lastNowMs = 0;
+
+void plc_tick(uint32_t nowMs)
+{
+    uint32_t periodMs = 10;
+    if (g_activeGraphValid && g_activeGraph.cycleMs > 0) {
+        periodMs = g_activeGraph.cycleMs;
+    }
+
+    uint32_t dt;
+    if (s_lastNowMs == 0) {
+        dt = periodMs;                 // первый цикл
+    } else {
+        dt = nowMs - s_lastNowMs;      // реальное время
+    }
+    s_lastNowMs = nowMs;
+
+    // clamp, чтобы не “взорвать” PID/таймеры после паузы
+    // (например, после дебага/стопа/высоких приоритетов)
+    const uint32_t DT_MAX = periodMs * 4u;   // типично 2..10 периодов
+    if (dt > DT_MAX) dt = DT_MAX;
+    if (dt == 0) dt = 1;                     // защита от 0
+
+    // дальше все таймеры/пиды используют dt (а не periodMs)
+    // plc_refresh_inputs_hw(nowMs, dt);
+    // plc_eval_graph(dt);
+
+
     // 1) активация нового графа
     if (g_needSwapGraph && g_stagingGraphValid) {
-        taskENTER_CRITICAL();
-        {
+
+
             g_activeGraph = g_stagingGraph;
             g_activeGraphValid = true;
             g_needSwapGraph = false;
             plc_graph_reset_runtime(&g_activeGraph);
+            memset(di_filter, 0, sizeof(di_filter));
+
+
+        if (PLC_RESET_MEM_ON_ACTIVATE) {
+            memset(s_memBool, 0, sizeof(s_memBool));
+            memset(s_memInt,  0, sizeof(s_memInt));
+            memset(s_memReal, 0, sizeof(s_memReal));
         }
-        taskEXIT_CRITICAL();
 
         // СБРОС ВСЕХ ВЫХОДОВ
         plc_hw_reset_outputs();
@@ -788,7 +816,7 @@ void plc_tick(uint32_t nowMs, uint32_t periodMs) {
     // 2) нет активного графа
     if (!g_activeGraphValid) {
 #if PLC_LOG_ENABLED && PLC_LOG_TICK
-        uint32_t tnow = now_ms();
+        uint32_t tnow = nowMs;
         if (tnow - s_tick_last_hb >= PLC_TICK_HEARTBEAT_MS) {
             s_tick_last_hb = tnow;
             LOGT(PLC_LOG_TAG, "tick: idle (no active graph)");
@@ -803,7 +831,7 @@ void plc_tick(uint32_t nowMs, uint32_t periodMs) {
     if (dt > PLC_TICK_DT_WARN_MS) {
         LOGT(PLC_LOG_TAG, "tick: dt=%u ms (WARN)", (unsigned) dt);
     } else {
-        uint32_t tnow = now_ms();
+        uint32_t tnow = nowMs;
         if (tnow - s_tick_last_hb >= PLC_TICK_HEARTBEAT_MS) {
             s_tick_last_hb = tnow;
             LOGT(PLC_LOG_TAG, "tick: ok dt=%u ms nodes=%u cycle=%u",
@@ -813,7 +841,7 @@ void plc_tick(uint32_t nowMs, uint32_t periodMs) {
 #endif
 
     // 4) цикл ПЛК
-    plc_refresh_inputs_hw(&g_activeGraph);
+    plc_refresh_inputs_hw(nowMs, &g_activeGraph);
     plc_apply_pending_cmds(&g_activeGraph, dt);
     plc_graph_step(&g_activeGraph, dt);
 
@@ -824,15 +852,25 @@ void plc_tick(uint32_t nowMs, uint32_t periodMs) {
 
 /* ================== Реализация refresh_inputs/apply_cmds/graph_step ================== */
 
-void plc_refresh_inputs_hw(PlcGraph *g) {
+void plc_refresh_inputs_hw(uint32_t nowMs, PlcGraph *g) {
     for (uint16_t i = 0; i < g->nodeCount; i++) {
         PlcNode *n = &g->nodes[i];
         switch (n->type) {
             case PLC_NODE_DIGITAL_IN: {
-                const uint32_t tnow = now_ms();
-                bool raw = hw_read_discrete_input(n->paramInt);
+                const uint32_t tnow = nowMs;
 
-                DiFilterState *fs = &di_filter[i];
+                int ch = n->paramInt;
+                if (ch < 0 || ch >= (int)(sizeof(di_filter)/sizeof(di_filter[0]))) {
+#if PLC_LOG_ENABLED
+                    LOGW(PLC_LOG_TAG, "DI node %u invalid channel=%d", (unsigned)i, ch);
+#endif
+                    // Поведение по умолчанию: считаем вход = 0
+                    n->out.b = false;
+                    break;
+                }
+
+                DiFilterState *fs = &di_filter[ch];
+                bool raw = hw_read_discrete_input(ch);
 
                 if (!fs->inited) {
                     fs->inited = true;
@@ -890,7 +928,7 @@ void plc_refresh_inputs_hw(PlcGraph *g) {
 
 #if PLC_LOG_ENABLED && PLC_LOG_INPUTS && PLC_LOG_AI
                 uint8_t do_log = 0;
-                uint32_t tnow = now_ms();
+                uint32_t tnow = nowMs;
                 if (!s_ai_init[i]) {
                     s_ai_init[i] = 1;
                     s_ai_last[i] = raw;
@@ -917,7 +955,6 @@ void plc_refresh_inputs_hw(PlcGraph *g) {
 
 void plc_apply_pending_cmds(PlcGraph *g, uint32_t dt_ms)
 {
-    taskENTER_CRITICAL();
     for (uint16_t i = 0; i < g->nodeCount; i++) {
         PlcNode *n = &g->nodes[i];
 
@@ -940,7 +977,6 @@ void plc_apply_pending_cmds(PlcGraph *g, uint32_t dt_ms)
             }
         }
     }
-    taskEXIT_CRITICAL();
 }
 
 static inline float get_float(const PlcNode *n) {
@@ -1149,6 +1185,13 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
             case PLC_NODE_COMPARE_LT: {
                 int32_t val = get_int(a);
                 self->out.b = (val < self->paramInt);
+                break;
+            }
+
+            case PLC_NODE_COMPARE_GE: {
+                int32_t aa = get_int(a);
+                int32_t bb = get_int(b);
+                self->out.b = (aa >= bb);
                 break;
             }
 
@@ -1546,13 +1589,13 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                 // CV
                 self->out.i = self->acc;
 
-                // Q: достигнут порог PV (если задан)
-                if (self->paramInt > 0) {
-                    self->out.b = (self->acc >= self->paramInt);
-                } else {
-                    // Если PV == 0, можно считать Q = (acc > 0) или всегда false — на твой вкус
-                    self->out.b = (self->acc > 0);
-                }
+//                // Q: достигнут порог PV (если задан)
+//                if (self->paramInt > 0) {
+//                    self->out.b = (self->acc >= self->paramInt);
+//                } else {
+//                    // Если PV == 0, можно считать Q = (acc > 0) или всегда false — на твой вкус
+//                    self->out.b = (self->acc > 0);
+//                }
 
                 break;
             }
@@ -1580,12 +1623,12 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
 
                 // Q: счётчик «дошёл/ниже порога».
                 // Например, считаем, что Q=1 когда acc == 0.
-                if (self->paramInt > 0) {
-                    // вариант: Q = (acc <= 0) или (acc <= paramInt), как тебе удобнее
-                    self->out.b = (self->acc <= 0);
-                } else {
-                    self->out.b = (self->acc <= 0);
-                }
+//                if (self->paramInt > 0) {
+//                    // вариант: Q = (acc <= 0) или (acc <= paramInt), как тебе удобнее
+//                    self->out.b = (self->acc <= 0);
+//                } else {
+//                    self->out.b = (self->acc <= 0);
+//                }
 
                 break;
             }
@@ -1611,11 +1654,11 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
 
                 self->out.i = self->acc;
 
-                if (self->paramInt > 0) {
-                    self->out.b = (self->acc >= self->paramInt);
-                } else {
-                    self->out.b = (self->acc > 0);
-                }
+//                if (self->paramInt > 0) {
+//                    self->out.b = (self->acc >= self->paramInt);
+//                } else {
+//                    self->out.b = (self->acc > 0);
+//                }
 
                 break;
             }
@@ -1701,7 +1744,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     break;
                 }
 
-                bool val = s_memBool[idx];
+                bool val = plc_mem_get_bool(idx);
 
                 // Если есть вход A — это источник нового значения
                 if (self->inA >= 0 && a) {
@@ -1712,7 +1755,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     }
                     if (we) {
                         val = get_bool(a);
-                        s_memBool[idx] = val;
+                        plc_mem_set_bool(idx, val);
                     }
                 }
 
@@ -1727,7 +1770,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     break;
                 }
 
-                int32_t val = s_memInt[idx];
+                int32_t val = plc_mem_get_int(idx);
 
                 if (self->inA >= 0 && a) {
                     bool we = true;
@@ -1736,7 +1779,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     }
                     if (we) {
                         val = get_int(a);
-                        s_memInt[idx] = val;
+                        plc_mem_set_int(idx, val);
                     }
                 }
 
@@ -1751,7 +1794,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     break;
                 }
 
-                float val = s_memReal[idx];
+                float val = plc_mem_get_real(idx);
 
                 if (self->inA >= 0 && a) {
                     bool we = true;
@@ -1760,7 +1803,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     }
                     if (we) {
                         val = get_float(a);
-                        s_memReal[idx] = val;
+                        plc_mem_set_real(idx, val);
                     }
                 }
 
@@ -1883,7 +1926,10 @@ void plc_mem_set_bool(uint16_t index, bool value) {
 
 bool plc_mem_get_bool(uint16_t index) {
     if (index >= PLC_MEM_BOOL_COUNT) return false;
-    return s_memBool[index];
+
+    bool v;
+    v = s_memBool[index];
+    return v;
 }
 
 void plc_mem_set_int(uint16_t index, int32_t value) {
@@ -1893,7 +1939,10 @@ void plc_mem_set_int(uint16_t index, int32_t value) {
 
 int32_t plc_mem_get_int(uint16_t index) {
     if (index >= PLC_MEM_INT_COUNT) return 0;
-    return s_memInt[index];
+
+    int32_t v;
+    v = s_memInt[index];
+    return v;
 }
 
 void plc_mem_set_real(uint16_t index, float value) {
@@ -1903,5 +1952,22 @@ void plc_mem_set_real(uint16_t index, float value) {
 
 float plc_mem_get_real(uint16_t index) {
     if (index >= PLC_MEM_REAL_COUNT) return 0.0f;
-    return s_memReal[index];
+
+    float v;
+    v = s_memReal[index];
+    return v;
 }
+
+void plc_mem_reset_all(void)
+{
+    memset(s_memBool, 0, sizeof(s_memBool));
+    memset(s_memInt,  0, sizeof(s_memInt));
+    memset(s_memReal, 0, sizeof(s_memReal));
+}
+
+void plc_mem_init(void)
+{
+    plc_mem_reset_all(); // пока RAM-only
+}
+
+

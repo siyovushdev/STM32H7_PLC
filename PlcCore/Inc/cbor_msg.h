@@ -3,7 +3,7 @@
 #include <string.h>
 
 #ifndef CBOR_MAX_REPLY
-#define CBOR_MAX_REPLY 4096u
+#define CBOR_MAX_REPLY 8192u
 #endif
 
 typedef struct {

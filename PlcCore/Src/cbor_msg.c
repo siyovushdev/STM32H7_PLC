@@ -1,11 +1,8 @@
 #include "cbor_msg.h"
 #include "plc_persist.h"
 #include "logf.h"
-#include <math.h>  // для INFINITY, NAN (если нет — могу заменить на макросы)
 #include "cbor.h"
 #include "plc.h"
-#include "FreeRTOS.h"
-#include "task.h"
 #include "plc_log.h"
 
 static const char *tag = "CBOR";
@@ -17,6 +14,10 @@ static const char *tag = "CBOR";
 
 #ifndef CBOR_DUMP_MAX
 #define CBOR_DUMP_MAX 1024u  // максимум байт входного буфера для hexdump (безопасно)
+#endif
+
+#ifndef MEM_RW_MAX_COUNT
+#define MEM_RW_MAX_COUNT 512u   // верхний предел на одну команду, чтобы не убить MCU
 #endif
 
 // IEEE-754 half-precision (16-bit) → single-precision (32-bit) float
@@ -203,11 +204,9 @@ void send_status_reply(CborReply *out)
     uint32_t cycle;
     uint16_t cnt;
 
-    taskENTER_CRITICAL();
     active = g_activeGraphValid;
     cycle  = active ? g_activeGraph.cycleMs : 0;
     cnt    = active ? g_activeGraph.nodeCount : 0;
-    taskEXIT_CRITICAL();
 
     cbor_encoder_init(&root, out->data, sizeof(out->data), 0);
     if(!_ok(cbor_encoder_create_map(&root, &map, CborIndefiniteLength))) goto send;
@@ -261,11 +260,10 @@ void send_status_reply(CborReply *out)
 
 
     if (active) {
-        taskENTER_CRITICAL();
         for (uint16_t i = 0; i < g_activeGraph.nodeCount; i++) {
             PlcNode* n = &g_activeGraph.nodes[i];
 
-            if(!_ok(cbor_encoder_create_map(&arr, &nmap, CborIndefiniteLength))) { taskEXIT_CRITICAL(); goto send; }
+            if(!_ok(cbor_encoder_create_map(&arr, &nmap, CborIndefiniteLength))) {  goto send; }
 
             // id
             if(!_ok(cbor_encode_text_stringz(&nmap, "id"))) goto ns_close;
@@ -327,15 +325,13 @@ void send_status_reply(CborReply *out)
                 cbor_encode_uint(&nmap, n->force_left_ms);
             }
 
-            if(!_ok(cbor_encoder_close_container(&arr, &nmap))) { taskEXIT_CRITICAL(); goto send; }
+            if(!_ok(cbor_encoder_close_container(&arr, &nmap))) {   goto send; }
             continue;
 
             ns_close:
             (void)cbor_encoder_close_container(&arr, &nmap);
-            taskEXIT_CRITICAL();
             goto send;
         }
-        taskEXIT_CRITICAL();
     }
 
     if(!_ok(cbor_encoder_close_container(&map, &arr))) goto send;
@@ -380,10 +376,8 @@ static void send_upload_graph_ack(bool ok, CborReply *out)
 
     uint16_t cnt = 0; uint32_t cycle = 0;
     if (ok) {
-        taskENTER_CRITICAL();
         cnt   = g_stagingGraphValid ? g_stagingGraph.nodeCount : 0;
         cycle = g_stagingGraphValid ? g_stagingGraph.cycleMs   : 0;
-        taskEXIT_CRITICAL();
     }
 
     cbor_encoder_init(&root, out->data, sizeof(out->data), 0);
@@ -475,6 +469,268 @@ void send_log_dump_reply(CborReply *out)
     size_t len = cbor_encoder_get_buffer_size(&enc, out->data);
     out->len = len;
 }
+
+
+
+// helper
+static inline bool map_find(const CborValue *mapCont, const char *key, CborValue *out) {
+    CborValue it = *mapCont; // копия итератора
+    CborError e = cbor_value_map_find_value(&it, key, out);
+    if (e != CborNoError) {
+        LOGT(tag, "map_find('%s'): err=%s", key, cbor_err_name(e));
+        return false;
+    }
+    if (!cbor_value_is_valid(out) || cbor_value_is_undefined(out)) {
+        LOGT(tag, "map_find('%s'): not found / undefined", key);
+        return false;
+    }
+    cbor_log_val(key, out);
+    return true;
+}
+
+static bool map_get_u32(const CborValue *root, const char *key, uint32_t *out)
+{
+    CborValue v;
+    if (!map_find(root, key, &v)) return false;
+    if (!cbor_value_is_unsigned_integer(&v)) return false;
+    uint64_t tmp = 0;
+    if (cbor_value_get_uint64(&v, &tmp) != CborNoError) return false;
+    *out = (uint32_t)tmp;
+    return true;
+}
+
+static bool map_get_text(const CborValue *root, const char *key, char *dst, size_t dstSize)
+{
+    CborValue v;
+    if (!map_find(root, key, &v)) return false;
+    if (!cbor_value_is_text_string(&v)) return false;
+
+    if (!dst || dstSize == 0) return false;
+    size_t n = dstSize - 1;
+    if (cbor_value_copy_text_string(&v, dst, &n, NULL) != CborNoError) return false;
+    dst[n] = '\0';
+    return true;
+}
+
+static bool map_get_array(const CborValue *root, const char *key, CborValue *outArr)
+{
+    if (!map_find(root, key, outArr)) return false;
+    return cbor_value_is_array(outArr);
+}
+
+static void send_simple_ok(const char *cmdAck, bool ok, uint32_t written, CborReply *out)
+{
+    CborEncoder rootE, map;
+    cbor_encoder_init(&rootE, out->data, sizeof(out->data), 0);
+    if(!_ok(cbor_encoder_create_map(&rootE, &map, CborIndefiniteLength))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "cmd"))) goto send;
+    if(!_ok(cbor_encode_text_stringz(&map, cmdAck))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "ok"))) goto send;
+    if(!_ok(cbor_encode_boolean(&map, ok))) goto send;
+
+    if (written != UINT32_MAX) {
+        if(!_ok(cbor_encode_text_stringz(&map, "written"))) goto send;
+        if(!_ok(cbor_encode_uint(&map, written))) goto send;
+    }
+
+    (void)cbor_encoder_close_container(&rootE, &map);
+    send:
+    out->len = (uint16_t)cbor_encoder_get_buffer_size(&rootE, out->data);
+}
+
+static void send_mem_read_reply(const char *type, uint32_t from, uint32_t count, CborReply *out)
+{
+    CborEncoder rootE, map, arr;
+    cbor_encoder_init(&rootE, out->data, sizeof(out->data), 0);
+    if(!_ok(cbor_encoder_create_map(&rootE, &map, CborIndefiniteLength))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "cmd"))) goto send;
+    if(!_ok(cbor_encode_text_stringz(&map, "mem_read"))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "type"))) goto send;
+    if(!_ok(cbor_encode_text_stringz(&map, type))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "from"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, from))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "count"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, count))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "values"))) goto send;
+    if(!_ok(cbor_encoder_create_array(&map, &arr, count))) goto send;
+
+    if (strcmp(type, "bool") == 0) {
+        for (uint32_t i = 0; i < count; i++) {
+            bool v = plc_mem_get_bool((uint16_t)(from + i));
+            if(!_ok(cbor_encode_boolean(&arr, v))) goto send;
+        }
+    } else if (strcmp(type, "int") == 0) {
+        for (uint32_t i = 0; i < count; i++) {
+            int32_t v = plc_mem_get_int((uint16_t)(from + i));
+            if(!_ok(cbor_encode_int(&arr, v))) goto send;
+        }
+    } else { // real
+        for (uint32_t i = 0; i < count; i++) {
+            float v = plc_mem_get_real((uint16_t)(from + i));
+            if(!_ok(cbor_encode_float(&arr, v))) goto send;
+        }
+    }
+
+    if(!_ok(cbor_encoder_close_container(&map, &arr))) goto send;
+    (void)cbor_encoder_close_container(&rootE, &map);
+
+    send:
+    out->len = (uint16_t)cbor_encoder_get_buffer_size(&rootE, out->data);
+}
+
+static void send_mem_info_reply(CborReply* out)
+{
+    CborEncoder root, map;
+    cbor_encoder_init(&root, out->data, sizeof(out->data), 0);
+
+    if(!_ok(cbor_encoder_create_map(&root, &map, CborIndefiniteLength))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "cmd"))) goto send;
+    if(!_ok(cbor_encode_text_stringz(&map, "mem_info"))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "boolCount"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, PLC_MEM_BOOL_COUNT))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "intCount"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, PLC_MEM_INT_COUNT))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "realCount"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, PLC_MEM_REAL_COUNT))) goto send;
+
+    (void)cbor_encoder_close_container(&root, &map);
+
+    send:
+    out->len = (uint16_t)cbor_encoder_get_buffer_size(&root, out->data);
+}
+
+
+static bool handle_mem_read(const CborValue *root, CborReply *out)
+{
+    char type[8];
+    uint32_t from = 0, count = 0;
+
+    if (!map_get_text(root, "type", type, sizeof(type))) return false;
+    if (!map_get_u32(root, "from", &from)) return false;
+    if (!map_get_u32(root, "count", &count)) return false;
+
+    if (count > MEM_RW_MAX_COUNT) count = MEM_RW_MAX_COUNT;
+
+    uint32_t maxCount = 0;
+    if (strcmp(type, "bool") == 0) maxCount = PLC_MEM_BOOL_COUNT;
+    else if (strcmp(type, "int") == 0) maxCount = PLC_MEM_INT_COUNT;
+    else if (strcmp(type, "real") == 0) maxCount = PLC_MEM_REAL_COUNT;
+    else return false;
+
+    if (from >= maxCount) count = 0;
+    else if (from + count > maxCount) count = maxCount - from;
+
+    send_mem_read_reply(type, from, count, out);
+    return true;
+}
+
+
+static bool handle_mem_write(const CborValue *root, CborReply *out)
+{
+
+
+    char type[8];
+    uint32_t from = 0;
+
+    if (!map_get_text(root, "type", type, sizeof(type))) return false;
+    if (!map_get_u32(root, "from", &from)) return false;
+
+    CborValue arr;
+    if (!map_get_array(root, "values", &arr)) return false;
+
+    uint32_t maxCount = 0;
+    if (strcmp(type, "bool") == 0) maxCount = PLC_MEM_BOOL_COUNT;
+    else if (strcmp(type, "int") == 0) maxCount = PLC_MEM_INT_COUNT;
+    else if (strcmp(type, "real") == 0) maxCount = PLC_MEM_REAL_COUNT;
+    else return false;
+
+    if (from >= maxCount) {
+        send_simple_ok("mem_write_ack", false, 0, out);
+        return true;
+    }
+
+    // длина массива
+    size_t arrLen = 0;
+    if (cbor_value_get_array_length(&arr, &arrLen) != CborNoError) return false;
+
+    uint32_t n = (uint32_t)arrLen;
+    if (n > MEM_RW_MAX_COUNT) n = MEM_RW_MAX_COUNT;
+    if (from + n > maxCount) n = maxCount - from;
+
+    // итерация
+    CborValue it;
+    if (cbor_value_enter_container(&arr, &it) != CborNoError) return false;
+
+    uint32_t written = 0;
+
+    LOGT(tag, "mem_write type=%s from=%lu arrLen=%lu n=%lu max=%lu",
+         type, (unsigned long)from, (unsigned long)arrLen,
+         (unsigned long)n, (unsigned long)maxCount);
+
+    for (uint32_t i = 0; i < n; i++) {
+        if (strcmp(type, "bool") == 0) {
+            bool v = false;
+            if (!cbor_value_is_boolean(&it)) break;
+            if (cbor_value_get_boolean(&it, &v) != CborNoError) break;
+            plc_mem_set_bool((uint16_t)(from + i), v);
+        } else if (strcmp(type, "int") == 0) {
+            int64_t v = 0;
+            if (!cbor_value_is_integer(&it)) break;
+            if (cbor_value_get_int64(&it, &v) != CborNoError) break;
+            plc_mem_set_int((uint16_t)(from + i), (int32_t)v);
+        } else { // real
+            float v = 0.0f;
+            if (cbor_value_is_float(&it)) {
+                if (cbor_value_get_float(&it, &v) != CborNoError) break;
+            } else if (cbor_value_is_double(&it)) {
+                double d = 0.0;
+                if (cbor_value_get_double(&it, &d) != CborNoError) break;
+                v = (float)d;
+            } else if (cbor_value_is_integer(&it)) {
+                int64_t vi = 0;
+                if (cbor_value_get_int64(&it, &vi) != CborNoError) break;
+                v = (float)vi;
+            } else {
+                break;
+            }
+
+            LOGT(tag, "mem_write real idx=%lu v=%f (raw type=%s)",
+                 (unsigned long)(from + i), (double)v,
+                 cbor_type_name(cbor_value_get_type(&it)));
+
+            plc_mem_set_real((uint16_t)(from + i), v);
+        }
+
+        written++;
+
+        if (cbor_value_advance(&it) != CborNoError) break;
+    }
+
+    (void)cbor_value_leave_container(&arr, &it);
+    LOGT(tag, "mem_write done written=%lu", (unsigned long)written);
+    send_simple_ok("mem_write_ack", true, written, out);
+    return true;
+}
+
+static bool handle_mem_reset(const CborValue *root, CborReply *out)
+{
+    (void)root;
+    plc_mem_reset_all();
+    send_simple_ok("mem_reset_ack", true, UINT32_MAX, out);
+    return true;
+}
+
 
 
 static bool get_int32(const CborValue *val, int32_t *out) {
@@ -582,25 +838,7 @@ static bool get_float_any(const CborValue *val, float *out) {
     return false;
 }
 
-
-
-// helper
-static inline bool map_find(CborValue *mapCont, const char *key, CborValue *out) {
-    CborValue it = *mapCont; // КОПИЯ!
-    CborError e = cbor_value_map_find_value(&it, key, out);
-    if(e!=CborNoError){
-        LOGT(tag, "map_find('%s'): err=%s", key, cbor_err_name(e));
-        return false;
-    }
-    if(!cbor_value_is_valid(out) || cbor_value_is_undefined(out)){
-        LOGT(tag, "map_find('%s'): not found / undefined", key);
-        return false;
-    }
-    cbor_log_val(key, out);
-    return true;
-}
-
-static CborError decode_single_node(CborValue *nodeMapIt, PlcNode *outNode) {
+static CborError decode_single_node(const CborValue *nodeMapIt, PlcNode *outNode) {
     // Инициируем дефолты (на случай отсутствующих ключей)
     outNode->id = 0;
     outNode->type = 0;
@@ -761,7 +999,7 @@ static CborError decode_single_node(CborValue *nodeMapIt, PlcNode *outNode) {
     return CborNoError;
 }
 
-static CborError decode_graph(CborValue *graphMapIt, PlcGraph *outGraph) {
+static CborError decode_graph(const CborValue *graphMapIt, PlcGraph *outGraph) {
     if (!cbor_value_is_map(graphMapIt)) {
         LOGT(tag, "graph is not map, type=%s", cbor_type_name(cbor_value_get_type(graphMapIt)));
         return CborErrorIllegalType;
@@ -848,34 +1086,27 @@ bool parse_cmd_upload_graph(CborValue root) {
         return false;
     }
 
-    PlcGraph *tmp = (PlcGraph*)pvPortMalloc(sizeof(PlcGraph));
-    if (!tmp) {
-        LOGT(tag, "NO HEAP: need=%u free=%u minEver=%u",
-             (unsigned)sizeof(PlcGraph),
-             (unsigned)xPortGetFreeHeapSize(),
-             (unsigned)xPortGetMinimumEverFreeHeapSize());
-        return false;
-    }
+    // Большой объект -> НЕ на стек. Один общий scratch.
+    static PlcGraph s_tmp;
+    memset(&s_tmp, 0, sizeof(s_tmp));
 
-    CborError err = decode_graph(&valGraph, tmp);
+    CborError err = decode_graph(&valGraph, &s_tmp);
     if (err != CborNoError) {
         LOGT(tag, "decode_graph err=%s", cbor_err_name(err));
-        vPortFree(tmp);
         return false;
     }
 
-    LOGT(tag, "graph summary: nodes=%u cycleMs=%u", (unsigned)tmp->nodeCount, (unsigned)tmp->cycleMs);
+    LOGT(tag, "graph summary: nodes=%u cycleMs=%u",
+         (unsigned)s_tmp.nodeCount, (unsigned)s_tmp.cycleMs);
 
-    bool ok = plc_upload_graph(tmp);   // внутри копируйте в staging или active
-    if (ok) {
-        plc_log_put(PLC_EVT_UPLOAD_OK, /*a=*/(int16_t)tmp->nodeCount, /*b=*/(int16_t)tmp->cycleMs);
-    } else {
-        plc_log_put(PLC_EVT_UPLOAD_FAIL, 0, 0);
-    }
-    vPortFree(tmp);
-    LOGT(tag, "plc_upload_graph -> %s", ok ? "OK" : "FAIL");
-    return ok;
+
+    g_stagingGraph = s_tmp;          // копия целиком (структура + nodes[])
+    g_stagingGraphValid = true;
+
+    plc_log_put(PLC_EVT_UPLOAD_OK, (int16_t)s_tmp.nodeCount, (int16_t)s_tmp.cycleMs);
+    return true;
 }
+
 
 // cmd = "release_output"
 // {
@@ -1053,6 +1284,29 @@ void on_cbor_frame_received(const uint8_t *buf, size_t len, CborReply* out) {
     if (strcmp(cmdBuf, "release_output") == 0) {
         bool ok = parse_cmd_release_output(root);
         send_release_output_ack(ok, out);
+        return;
+    }
+
+    if (strcmp(cmdBuf, "mem_read") == 0) {
+        bool ok = handle_mem_read(&root, out);
+        if (!ok) send_simple_ok("mem_read_ack", false, 0, out); // на случай ошибок формата
+        return;
+    }
+
+    if (strcmp(cmdBuf, "mem_write") == 0) {
+        bool ok = handle_mem_write(&root, out);
+        if (!ok) send_simple_ok("mem_write_ack", false, 0, out);
+        return;
+    }
+
+    if (strcmp(cmdBuf, "mem_reset") == 0) {
+        bool ok = handle_mem_reset(&root, out);
+        if (!ok) send_simple_ok("mem_reset_ack", false, 0, out);
+        return;
+    }
+
+    if (strcmp(cmdBuf, "mem_info") == 0) {
+        send_mem_info_reply(out);
         return;
     }
 

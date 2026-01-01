@@ -1,22 +1,26 @@
+// plc_comm_tcp.c — robust TCP server (lwIP netconn) without per-frame malloc/free
+// Protocol: [len_lo][len_hi][payload] where len = payload bytes (1..PLC_TCP_MAX_PAYLOAD)
+
 #include "plc_comm_tcp.h"
 
 #include "lwip/api.h"
-#include "lwip/sys.h"
 #include "lwip/err.h"
+#include "lwip/sys.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
 
 #include "cbor_msg.h"   // CborReply + on_cbor_frame_received()
-#include "plc_log.h"    // LOGT(tag,...)
+#include "plc_log.h"    // LOGT(TAG,...)
 #include "logf.h"
 
 #include <string.h>
-#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #define TAG "PLC.TCP"
 
-// ===== Настройки =====
+// ===== Config =====
 #ifndef PLC_TCP_PORT_DEFAULT
 #define PLC_TCP_PORT_DEFAULT          5555
 #endif
@@ -26,49 +30,29 @@
 #endif
 
 #ifndef PLC_TCP_MAX_PAYLOAD
-// Подними до нужного тебе. Главное: хватит pbuf/mem в lwip и RAM/heap.
 #define PLC_TCP_MAX_PAYLOAD           (64u * 1024u)
 #endif
 
+#ifndef PLC_TCP_MAX_FRAMES_PER_PUMP
+#define PLC_TCP_MAX_FRAMES_PER_PUMP   8u
+#endif
+
 #ifndef PLC_TCP_RING_CAP
-// Должно быть > (max_payload + 4) * 2, чтобы пережить большие netbuf/цепочки.
+// Must be > (max_payload + 2) * 2 to tolerate fragmentation and chained pbufs
 #define PLC_TCP_RING_CAP              ((PLC_TCP_MAX_PAYLOAD + 2u) * 2u + 256u)
 #endif
 
-// статический буфер (один клиент)
+// ===== Static buffers (one client at a time) =====
 __attribute__((aligned(32)))
 static uint8_t s_tcp_ring[PLC_TCP_RING_CAP];
 
-// ===== CRC16 (MODBUS) по [len_lo,len_hi] + payload =====
-static uint16_t crc16_modbus_update(uint16_t crc, uint8_t in)
-{
-    crc ^= (uint16_t)in;
-    for (uint8_t b = 0; b < 8; b++) {
-        if (crc & 1u) crc = (uint16_t)((crc >> 1) ^ 0xA001u);
-        else          crc >>= 1;
-    }
-    return crc;
-}
+__attribute__((aligned(32)))
+static uint8_t s_payload_buf[PLC_TCP_MAX_PAYLOAD];
 
-static uint16_t crc16_modbus_len_payload(const uint8_t *payload, uint16_t len)
-{
-    uint16_t crc = 0xFFFFu;
+__attribute__((aligned(32)))
+static uint8_t s_tx_frame[2u + PLC_TCP_MAX_PAYLOAD];
 
-    uint8_t hdr0 = (uint8_t)(len & 0xFFu);
-    uint8_t hdr1 = (uint8_t)((len >> 8) & 0xFFu);
-
-    crc = crc16_modbus_update(crc, hdr0);
-    crc = crc16_modbus_update(crc, hdr1);
-
-    for (uint16_t i = 0; i < len; i++) {
-        crc = crc16_modbus_update(crc, payload[i]);
-    }
-
-    return crc;
-}
-
-
-// ===== Ring Buffer (поток TCP) =====
+// ===== Ring buffer =====
 typedef struct {
     uint8_t *buf;
     uint32_t cap;
@@ -91,16 +75,8 @@ static uint32_t ring_used(const Ring *q)
 
 static uint32_t ring_free(const Ring *q)
 {
-    // оставляем 1 байт, чтобы r==w означало пусто
+    // keep 1 byte gap so r==w means empty
     return q->cap - ring_used(q) - 1u;
-}
-
-static void ring_write(Ring *q, const uint8_t *src, uint32_t n)
-{
-    for (uint32_t i = 0; i < n; i++) {
-        q->buf[q->w] = src[i];
-        q->w = (q->w + 1u) % q->cap;
-    }
 }
 
 static uint8_t ring_peek(const Ring *q, uint32_t off)
@@ -114,12 +90,46 @@ static void ring_drop(Ring *q, uint32_t n)
     q->r = (q->r + n) % q->cap;
 }
 
+// memcpy-based write (fast)
+static void ring_write(Ring *q, const uint8_t *src, uint32_t n)
+{
+    uint32_t cap = q->cap;
+    uint32_t w = q->w;
+
+    uint32_t first = cap - w;
+    if (first > n) first = n;
+
+    memcpy(&q->buf[w], src, first);
+    w = (w + first) % cap;
+
+    uint32_t left = n - first;
+    if (left) {
+        memcpy(&q->buf[w], src + first, left);
+        w = (w + left) % cap;
+    }
+
+    q->w = w;
+}
+
+// memcpy-based read (fast)
 static void ring_read(Ring *q, uint8_t *dst, uint32_t n)
 {
-    for (uint32_t i = 0; i < n; i++) {
-        dst[i] = q->buf[q->r];
-        q->r = (q->r + 1u) % q->cap;
+    uint32_t cap = q->cap;
+    uint32_t r = q->r;
+
+    uint32_t first = cap - r;
+    if (first > n) first = n;
+
+    memcpy(dst, &q->buf[r], first);
+    r = (r + first) % cap;
+
+    uint32_t left = n - first;
+    if (left) {
+        memcpy(dst + first, &q->buf[r], left);
+        r = (r + left) % cap;
     }
+
+    q->r = r;
 }
 
 // ===== Send helpers =====
@@ -129,7 +139,13 @@ static err_t send_all(struct netconn *c, const uint8_t *data, uint16_t len)
     uint16_t sent = 0;
     while (sent < len) {
         size_t out = 0;
-        err_t e = netconn_write_partly(c, data + sent, (size_t)(len - sent), NETCONN_COPY, &out);
+        err_t e = netconn_write_partly(
+                c,
+                data + sent,
+                (size_t)(len - sent),
+                NETCONN_COPY,
+                &out
+        );
         if (e != ERR_OK) return e;
         if (out == 0) return ERR_CLSD;
         sent += (uint16_t)out;
@@ -142,80 +158,62 @@ static err_t send_all(struct netconn *c, const uint8_t *data, uint16_t len)
 
 static err_t send_frame(struct netconn *c, const uint8_t *payload, uint16_t plen)
 {
-    // frame = [len_lo][len_hi][payload]
-    uint32_t flen = 2u + (uint32_t)plen;
+    if (plen == 0 || plen > PLC_TCP_MAX_PAYLOAD) return ERR_VAL;
 
-    uint8_t *frame = (uint8_t*)pvPortMalloc(flen);
-    if (!frame) return ERR_MEM;
+    s_tx_frame[0] = (uint8_t)(plen & 0xFFu);
+    s_tx_frame[1] = (uint8_t)((plen >> 8) & 0xFFu);
+    memcpy(&s_tx_frame[2], payload, plen);
 
-    frame[0] = (uint8_t)(plen & 0xFFu);
-    frame[1] = (uint8_t)((plen >> 8) & 0xFFu);
-    if (plen > 0) {
-        memcpy(&frame[2], payload, plen);
-    }
-
-    err_t e = send_all(c, frame, (uint16_t)flen);
-    vPortFree(frame);
-    return e;
+    return send_all(c, s_tx_frame, (uint16_t)(2u + plen));
 }
-
 
 // ===== Frame parsing =====
 static bool process_frames(struct netconn *c, Ring *q)
 {
-    // Ограничиваем работу за один приём netbuf, чтобы не душить другие задачи (USB log, lwIP и т.д.)
     for (uint32_t frames = 0; frames < PLC_TCP_MAX_FRAMES_PER_PUMP; frames++) {
 
         if (ring_used(q) < 2u) return true;
 
         uint16_t plen = (uint16_t)(ring_peek(q, 0) | ((uint16_t)ring_peek(q, 1) << 8));
 
-        // защита от мусора/рассинхрона
+        // resync protection
         if (plen == 0 || plen > PLC_TCP_MAX_PAYLOAD) {
-            // Не ресинхронимся по 1 байту — это может увести задачу в 100% CPU.
-            // Сбрасываем накопленное и возвращаемся ждать новый нормальный кадр.
-            ring_drop(q, ring_used(q));
+            uint32_t u = ring_used(q);
+            LOGT(TAG, "bad plen=%u used=%lu -> flush",
+                 (unsigned)plen, (unsigned long)u);
+            ring_drop(q, u);
             return true;
         }
 
         uint32_t need = 2u + (uint32_t)plen;
         if (ring_used(q) < need) return true;
 
-        // снять len
+        // drop header
         ring_drop(q, 2u);
 
-        // payload
-        uint8_t *payload = (uint8_t*)pvPortMalloc(plen);
-        if (!payload) {
-            LOGT(TAG, "NO HEAP for payload plen=%u", (unsigned)plen);
-            // дропаем кадр целиком, чтобы не зависнуть
-            ring_drop(q, plen);
-            return false;
-        }
-        ring_read(q, payload, plen);
+        // read payload into static buffer
+        ring_read(q, s_payload_buf, plen);
 
-        // ===== CBOR обработка =====
+        // CBOR handler
         CborReply reply;
         reply.len = 0;
-        on_cbor_frame_received(payload, (size_t)plen, &reply);
-        vPortFree(payload);
+        on_cbor_frame_received(s_payload_buf, (size_t)plen, &reply);
 
-        // ===== Ответ =====
+        // reply
         if (reply.len > 0) {
             if (reply.len > PLC_TCP_MAX_PAYLOAD) {
                 LOGT(TAG, "reply too big: %u", (unsigned)reply.len);
                 continue;
             }
-            err_t e = send_frame(c, reply.data, (uint16_t)reply.len);
-            if (e != ERR_OK) {
-                LOGT(TAG, "send_frame err=%d", (int)e);
+            err_t se = send_frame(c, reply.data, (uint16_t)reply.len);
+            if (se != ERR_OK) {
+                LOGT(TAG, "send_frame err=%d", (int)se);
                 return false;
             }
         }
     }
     return true;
 }
-
 
 // ===== Client service =====
 static void serve_client(struct netconn *c)
@@ -232,25 +230,31 @@ static void serve_client(struct netconn *c)
         err_t e = netconn_recv(c, &nb);
 
         if (e == ERR_TIMEOUT) {
-            // таймаут – это норма
             if (nb) { netbuf_delete(nb); nb = NULL; }
             continue;
         }
 
-        if (e != ERR_OK || nb == NULL) {
-            break; // клиент ушёл/ошибка
+        if (e != ERR_OK) {
+            LOGT(TAG, "recv err=%d nb=%p -> disconnect", (int)e, nb);
+            if (nb) { netbuf_delete(nb); nb = NULL; }
+            break;
         }
 
-        // netbuf может содержать цепочку pbuf — забираем все сегменты
+        if (nb == NULL) {
+            LOGT(TAG, "recv OK but nb==NULL -> disconnect");
+            break;
+        }
+
+        // netbuf can be a chained pbuf list
         do {
             void *data = NULL;
             u16_t len = 0;
             netbuf_data(nb, &data, &len);
 
-            if (len > 0) {
+            if (len > 0 && data) {
                 if (ring_free(&q) < (uint32_t)len) {
-                    LOGT(TAG, "ring overflow free=%u need=%u -> drop conn",
-                         (unsigned)ring_free(&q), (unsigned)len);
+                    LOGT(TAG, "ring overflow free=%lu need=%u -> drop conn",
+                         (unsigned long)ring_free(&q), (unsigned)len);
                     netbuf_delete(nb);
                     goto exit;
                 }
@@ -300,18 +304,29 @@ static void tcp_server_task(void *arg)
         return;
     }
 
-    netconn_listen(s_srv);
+    err_t le = netconn_listen(s_srv);
+    if (le != ERR_OK) {
+        LOGT(TAG, "listen err=%d", (int)le);
+        netconn_delete(s_srv);
+        s_srv = NULL;
+        s_task = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+
     LOGT(TAG, "listen port=%u", (unsigned)port);
 
     while (!s_stop) {
         struct netconn *c = NULL;
         err_t ae = netconn_accept(s_srv, &c);
         if (ae != ERR_OK || c == NULL) {
-            vTaskDelay(pdMS_TO_TICKS(50));
+            LOGT(TAG, "accept err=%d c=%p", (int)ae, c);
+            vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
+        LOGT(TAG, "accept ok c=%p", c);
 
-        // Один клиент за раз (ПК). Для мультиклиента — spawn per connection.
+        // one client at a time
         serve_client(c);
 
         netconn_close(c);
@@ -332,10 +347,12 @@ bool PlcCommTcp_Start(uint16_t port)
 {
     if (s_task) return true;
 
+    // FreeRTOS stack is in WORDS, not bytes.
+    // 4096 words = 16 KB. Adjust if needed.
     BaseType_t ok = xTaskCreate(
             tcp_server_task,
             "PlcTcpSrv",
-            4096,                          // подними, если мало
+            4096,
             (void*)(uintptr_t)port,
             tskIDLE_PRIORITY + 2,
             &s_task

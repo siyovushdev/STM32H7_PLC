@@ -21,17 +21,19 @@ void vApplicationMallocFailedHook(void) {
     // taskDISABLE_INTERRUPTS(); for(;;);
 }
 
-void vApplicationStackOverflowHook(TaskHandle_t t, char *name) {
+void vApplicationStackOverflowHook(TaskHandle_t t, char *name)
+{
+    (void)t;
+    (void)name;
+
+    taskDISABLE_INTERRUPTS();
     g_faultCode = 2;
-    UsbLog_printf("STACK OVERFLOW: %s\r\n", name ? name : "?");
-    while (1)
-    {
-        vTaskDelay(1000);
-        /* USER CODE BEGIN W1_HardFault_IRQn 0 */
-        /* USER CODE END W1_HardFault_IRQn 0 */
-    }
-    // taskDISABLE_INTERRUPTS(); for(;;);
+
+    // минимальный вывод, если у тебя есть неблокирующий UART/ITM
+    // иначе вообще без логов
+    while (1) { }
 }
+
 
 void vApplicationIdleHook(void) {
     static uint32_t last = 0;
