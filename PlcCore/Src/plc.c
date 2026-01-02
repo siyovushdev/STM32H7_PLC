@@ -146,6 +146,37 @@ void plc_graph_reset_runtime(PlcGraph *g) {
     }
 }
 
+// --- validation helpers (PLC-style) ---
+static inline PlcValueType node_type(const PlcGraph* g, int16_t idx) {
+    if (!g) return PLC_VAL_FLOAT;
+    if (idx < 0) return PLC_VAL_FLOAT;
+    if ((uint16_t)idx >= g->nodeCount) return PLC_VAL_FLOAT;
+    return g->nodes[idx].valueType;
+}
+
+static inline bool is_bool_node(const PlcGraph* g, int16_t idx) {
+    return node_type(g, idx) == PLC_VAL_BOOL;
+}
+
+static inline bool is_numeric_node(const PlcGraph* g, int16_t idx) {
+    PlcValueType t = node_type(g, idx);
+    return (t == PLC_VAL_INT) || (t == PLC_VAL_FLOAT);
+}
+
+// FLOAT и INT считаем совместимыми (как в PLC: INT может быть приведён к REAL)
+static inline bool types_compatible_nodes(const PlcGraph* g, int16_t a, int16_t b) {
+    PlcValueType ta = node_type(g, a);
+    PlcValueType tb = node_type(g, b);
+
+    if (ta == tb) return true;
+
+    const bool na = (ta == PLC_VAL_INT) || (ta == PLC_VAL_FLOAT);
+    const bool nb = (tb == PLC_VAL_INT) || (tb == PLC_VAL_FLOAT);
+    if (na && nb) return true;
+
+    return false;
+}
+
 bool plc_validate_graph(PlcGraph *g) {
     if (g->nodeCount == 0) {
         LOGT("PLC", "g->nodeCount == 0. Return false");
@@ -209,8 +240,6 @@ bool plc_validate_graph(PlcGraph *g) {
             case PLC_NODE_R_TRIG:
             case PLC_NODE_F_TRIG:
             case PLC_NODE_PWM_OUT:
-            case PLC_NODE_COMPARE_GT:
-            case PLC_NODE_COMPARE_LT:
             case PLC_NODE_AO:
                 if (n->inA < 0) {
                     LOGT("PLC", "node[%u] type=%u requires inA>=0", i, (unsigned) n->type);
@@ -221,9 +250,25 @@ bool plc_validate_graph(PlcGraph *g) {
                 // Узлы, требующие два входа
             case PLC_NODE_AND2:
             case PLC_NODE_OR2:
-            case PLC_NODE_COMPARE_GE:
                 if (n->inA < 0 || n->inB < 0) {
-                    LOGT("PLC", "node[%u] type=%u requires inA>=0 and inB>=0", i, (unsigned) n->type);
+                    LOGT("PLC", "node[%u] AND/OR requires inA and inB", i);
+                    return false;
+                }
+                if (!is_bool_node(g, n->inA) || !is_bool_node(g, n->inB)) {
+                    LOGT("PLC", "node[%u] AND/OR requires BOOL inputs", i);
+                    return false;
+                }
+                break;
+
+            case PLC_NODE_COMPARE_GE:
+            case PLC_NODE_COMPARE_GT:
+            case PLC_NODE_COMPARE_LT:
+                if (n->inA < 0 || n->inB < 0) {
+                    LOGT("PLC", "node[%u] COMPARE requires inA and inB", i);
+                    return false;
+                }
+                if (!types_compatible_nodes(g, n->inA, n->inB)) {
+                    LOGT("PLC", "node[%u] COMPARE incompatible input types", i);
                     return false;
                 }
                 break;
@@ -905,25 +950,17 @@ void plc_refresh_inputs_hw(uint32_t nowMs, PlcGraph *g) {
                 break;
             }
             case PLC_NODE_AI_IN: {
-                int32_t raw = hw_read_adc_input(n->paramInt);
-                switch (n->valueType) {
-                    case PLC_VAL_INT:
-                        n->out.i = raw;              // сырое значение 0..4095
-                        break;
+                int32_t raw = hw_read_adc_input(n->paramInt); // 0..4095
 
-                    case PLC_VAL_FLOAT:
-                        // пример: вольты 0..3.3
-                        n->out.f = (float)raw * (3.3f / 4095.0f);
-                        break;
+                // Нормализованный сигнал 0..1 (PLC-стайл)
+                float x = (float)raw * (1.0f / 4095.0f);
 
-                    case PLC_VAL_BOOL:
-                        // порог, например > половины шкалы
-                        n->out.b = (raw > 2048);
-                        break;
-
-                    default:
-                        // можно ничего не делать
-                        break;
+                // RAW оставим только если явно нужен
+                if (n->paramMs > 0) {
+                    n->out.i = raw;
+                    n->out.f = (float) raw;
+                } else {
+                    n->out.f = x;  // default: FLOAT
                 }
 
 #if PLC_LOG_ENABLED && PLC_LOG_INPUTS && PLC_LOG_AI
@@ -1176,24 +1213,28 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
             }
 
 
-            case PLC_NODE_COMPARE_GT: {
-                int32_t val = get_int(a);
-                self->out.b = (val > self->paramInt);
+            case PLC_NODE_COMPARE_LT: {
+                float aa = a ? get_float(a) : 0.0f;
+                float bb = b ? get_float(b) : 0.0f;
+                self->out.b = (aa < bb);
                 break;
             }
 
-            case PLC_NODE_COMPARE_LT: {
-                int32_t val = get_int(a);
-                self->out.b = (val < self->paramInt);
+            case PLC_NODE_COMPARE_GT: {
+                float aa = a ? get_float(a) : 0.0f;
+                float bb = b ? get_float(b) : 0.0f;
+                self->out.b = (aa > bb);
                 break;
             }
 
             case PLC_NODE_COMPARE_GE: {
-                int32_t aa = get_int(a);
-                int32_t bb = get_int(b);
+                float aa = a ? get_float(a) : 0.0f;
+                float bb = b ? get_float(b) : 0.0f;
                 self->out.b = (aa >= bb);
                 break;
             }
+
+
 
             case PLC_NODE_DIGITAL_OUT: {
                 bool desired = get_bool(a);
@@ -1244,6 +1285,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
 
                 hw_write_pwm_output(self->paramInt, duty);
                 self->out.i = duty;
+                self->out.f = (float) duty;
 
 #if PLC_LOG_ENABLED && PLC_LOG_GRAPH
                 if (!s_pwm_init[i] || iabs32(duty - s_pwm_last[i]) >= PLC_PWM_DELTA) {
@@ -1308,12 +1350,11 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                 const PlcNode *s = (self->paramInt >= 0) ? &g->nodes[self->paramInt] : NULL;
                 bool sel = s ? get_bool(s) : false;
 
-
                 switch (self->valueType) {
                     case PLC_VAL_BOOL: {
                         bool va = a ? get_bool(a) : false;
                         bool vb = b ? get_bool(b) : false;
-                        bool y  = sel ? vb : va;
+                        bool y = sel ? va : vb;
                         self->out.b = y;
                         break;
                     }
@@ -1321,7 +1362,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     case PLC_VAL_INT: {
                         int32_t va = a ? get_int(a) : 0;
                         int32_t vb = b ? get_int(b) : 0;
-                        int32_t y  = sel ? vb : va;
+                        int32_t y = sel ? va : vb;
                         self->out.i = y;
                         break;
                     }
@@ -1330,7 +1371,7 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                     default: {
                         float va = a ? get_float(a) : 0.0f;
                         float vb = b ? get_float(b) : 0.0f;
-                        float y  = sel ? vb : va;
+                        float y = sel ? va : vb;
                         self->out.f = y;
                         break;
                     }
@@ -1342,8 +1383,12 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                 if (!s_mux_init[i] || s_mux_last_sel[i] != (uint8_t) sel) {
                     s_mux_init[i] = 1;
                     s_mux_last_sel[i] = (uint8_t) sel;
-                    LOGT(PLC_LOG_TAG, "MUX2[%u] sel=%u -> y=%ld (f=%.3f)", (unsigned) i, (unsigned) sel,
-                         (long) self->out.i, (double) self->out.f);
+                    if (self->valueType == PLC_VAL_FLOAT)
+                    LOGT(PLC_LOG_TAG,  "MUX2[%u] sel=%u -> y=%.3f", i, sel, (double)self->out.f);
+                    else if (self->valueType == PLC_VAL_INT)
+                    LOGT(PLC_LOG_TAG,  "MUX2[%u] sel=%u -> y=%ld", i, sel, (long)self->out.i);
+                    else
+                    LOGT(PLC_LOG_TAG,  "MUX2[%u] sel=%u -> y=%u", i, sel, (unsigned)self->out.b);
                 }
 #endif
                 break;

@@ -4,9 +4,146 @@
 #include "cbor.h"
 #include "plc.h"
 #include "plc_log.h"
+#include "cmsis_os2.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 static const char *tag = "CBOR";
 
+// ====== SINGLE-WRITER CBOR QUEUE (transport -> PLC task) ======
+typedef struct {
+    CborReply*       out;     // куда писать ответ
+    osEventFlagsId_t ev;      // сигнал завершения
+    int32_t          status;  // 0 ok, <0 internal error
+} CborRpc;
+
+typedef struct {
+    uint8_t*  payload; // heap (pvPortMalloc)
+    uint32_t  len;
+    CborRpc*  rpc;     // stack-owned в transport-потоке; valid пока тот ждёт
+} CborCmdItem;
+
+static osMessageQueueId_t s_cborQ = NULL;
+
+bool CborMsg_InitQueue(uint32_t depth)
+{
+    if (s_cborQ) return true;
+
+    if (depth == 0u) depth = 8u;
+    s_cborQ = osMessageQueueNew(depth, sizeof(CborCmdItem), NULL);
+    if (!s_cborQ) {
+        LOGT(tag, "CborMsg_InitQueue: osMessageQueueNew failed (depth=%u)", (unsigned)depth);
+        return false;
+    }
+    LOGT(tag, "CborMsg_InitQueue: ok (depth=%u)", (unsigned)depth);
+    return true;
+}
+
+static void cbor_signal_done(CborRpc* rpc)
+{
+    if (!rpc || !rpc->ev) return;
+    (void)osEventFlagsSet(rpc->ev, 0x1u);
+}
+
+bool CborMsg_RpcCall(const uint8_t* frame, size_t len, CborReply* reply, uint32_t timeoutMs)
+{
+    if (!s_cborQ) {
+        // очередь не инициализирована — это конфигурационная ошибка
+        if (reply) reply->len = 0;
+        return false;
+    }
+    if (!frame || len == 0u) {
+        if (reply) reply->len = 0;
+        return false;
+    }
+
+    // stack-owned RPC context
+    CborRpc rpc;
+    memset(&rpc, 0, sizeof(rpc));
+    rpc.out = reply;
+    rpc.ev  = osEventFlagsNew(NULL);
+    rpc.status = -1;
+
+    if (!rpc.ev) {
+        if (reply) reply->len = 0;
+        return false;
+    }
+
+    uint8_t* copy = (uint8_t*)pvPortMalloc(len);
+    if (!copy) {
+        LOGT(tag, "CborMsg_RpcCall: NO HEAP len=%u free=%u minEver=%u",
+             (unsigned)len,
+             (unsigned)xPortGetFreeHeapSize(),
+             (unsigned)xPortGetMinimumEverFreeHeapSize());
+        osEventFlagsDelete(rpc.ev);
+        if (reply) reply->len = 0;
+        return false;
+    }
+    memcpy(copy, frame, len);
+
+    CborCmdItem item;
+    item.payload = copy;
+    item.len     = (uint32_t)len;
+    item.rpc     = &rpc;
+
+    // put to queue
+    osStatus_t st = osMessageQueuePut(s_cborQ, &item, 0, 0);
+    if (st != osOK) {
+        LOGT(tag, "CborMsg_RpcCall: queue full/st=%d", (int)st);
+        vPortFree(copy);
+        osEventFlagsDelete(rpc.ev);
+        if (reply) reply->len = 0;
+        return false;
+    }
+
+    // wait completion
+    uint32_t flags = osEventFlagsWait(rpc.ev, 0x1u, osFlagsWaitAny, timeoutMs);
+    if ((int32_t)flags < 0) {
+        LOGT(tag, "CborMsg_RpcCall: timeout/st=%d", (int)flags);
+        // PLC task всё равно может позже обработать и освободить payload.
+        // Чтобы не утекла память, PLC task обязан освобождать payload всегда.
+        osEventFlagsDelete(rpc.ev);
+        if (reply) reply->len = 0;
+        return false;
+    }
+
+    osEventFlagsDelete(rpc.ev);
+    return true;
+}
+
+uint32_t CborMsg_Pump(uint32_t maxItems, uint32_t timeoutMsFirst)
+{
+    if (!s_cborQ) return 0u;
+    if (maxItems == 0u) maxItems = 1u;
+
+    uint32_t processed = 0;
+    for (uint32_t i = 0; i < maxItems; ++i) {
+        CborCmdItem item;
+        memset(&item, 0, sizeof(item));
+
+        uint32_t timeout = (processed == 0u) ? timeoutMsFirst : 0u;
+        osStatus_t st = osMessageQueueGet(s_cborQ, &item, NULL, timeout);
+        if (st != osOK) break;
+
+        // execute (single-writer): PLC task only
+        if (item.rpc && item.rpc->out) item.rpc->out->len = 0;
+        on_cbor_frame_received(item.payload, (size_t)item.len, item.rpc ? item.rpc->out : NULL);
+
+        // free payload always
+        if (item.payload) {
+            vPortFree(item.payload);
+            item.payload = NULL;
+        }
+
+        if (item.rpc) {
+            item.rpc->status = 0;
+            cbor_signal_done(item.rpc);
+        }
+
+        processed++;
+    }
+    return processed;
+}
 // ====== CBOR LOGGING HELPERS ======
 #ifndef CBOR_LOG_ENABLED
 #define CBOR_LOG_ENABLED 1
@@ -182,7 +319,23 @@ static const char *cbor_type_name(CborType t) {
 
 static inline bool _ok(CborError e){ return e==CborNoError; }
 
-extern void proto_get_counters(uint32_t *rx_ok, uint32_t *rx_crc, uint32_t *rx_parse, uint32_t *tx_ok);
+// ---- protocol counters ----
+static uint32_t g_rx_frames = 0;
+static uint32_t g_rx_crc_err = 0;
+static uint32_t g_rx_parse_err = 0;
+static uint32_t g_tx_frames = 0;
+
+void proto_count_rx_frame_ok(void){ g_rx_frames++; }
+void proto_count_rx_crc_err(void){ g_rx_crc_err++; }
+void proto_count_rx_parse_err(void){ g_rx_parse_err++; }
+void proto_count_tx_frame(void){ g_tx_frames++; }
+
+void proto_get_counters(uint32_t *rx_ok, uint32_t *rx_crc, uint32_t *rx_parse, uint32_t *tx_ok){
+    if(rx_ok) *rx_ok = g_rx_frames;
+    if(rx_crc) *rx_crc = g_rx_crc_err;
+    if(rx_parse) *rx_parse = g_rx_parse_err;
+    if(tx_ok) *tx_ok = g_tx_frames;
+}
 
 // ---- PLC runtime metrics ----
 extern uint32_t g_scan_cnt;
@@ -1312,7 +1465,6 @@ void on_cbor_frame_received(const uint8_t *buf, size_t len, CborReply* out) {
 
     LOGT(tag, "unknown cmd");
 }
-
 
 
 

@@ -193,12 +193,16 @@ static bool process_frames(struct netconn *c, Ring *q)
 
         // read payload into static buffer
         ring_read(q, s_payload_buf, plen);
-
-        // CBOR handler
+        // CBOR handler (single-writer via PLC task queue)
         CborReply reply;
         reply.len = 0;
-        on_cbor_frame_received(s_payload_buf, (size_t)plen, &reply);
 
+        bool okRpc = CborMsg_RpcCall(s_payload_buf, (size_t)plen, &reply, PLC_TCP_RECV_TIMEOUT_MS);
+        if (!okRpc) {
+            // Если PLC task не ответил (очередь/таймаут), просто не отправляем ответ.
+            // Клиент сам решит, что делать (retry / reconnect).
+            LOGT(TAG, "RPC failed (queue/timeout)");
+        }
         // reply
         if (reply.len > 0) {
             if (reply.len > PLC_TCP_MAX_PAYLOAD) {
