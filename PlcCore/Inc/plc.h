@@ -89,6 +89,7 @@ typedef enum {
     PLC_NODE_MATH_OP      = 39, // Базовые операции: +, -, *, / над двумя входами
     PLC_NODE_CONST_FLOAT  = 40,  // константа float (уставки, коэффициенты)
     PLC_NODE_COMPARE_GE   = 41, // A >= B
+    PLC_NODE_MAX = PLC_NODE_COMPARE_GE
 } PlcNodeType;
 
 // --- Доступ к памяти ПЛК (глобальные регистры) ---

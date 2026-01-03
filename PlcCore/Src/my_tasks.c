@@ -255,9 +255,7 @@ void TaskPlcScan(void *arg)
     for (;;)
     {
         uint32_t period;
-        taskENTER_CRITICAL();
         period = g_activeGraphValid ? g_activeGraph.cycleMs : 10u;
-        taskEXIT_CRITICAL();
 
         if (period == 0) period = 10u;
         if (period < 5) period = 5;
@@ -348,14 +346,14 @@ void TaskComms(void *arg)
 {
     (void)arg;
 
-    for (;;)
-    {
-        (void)Uart3_CommsProcessOnce(50); // ждём первый байт до 50мс, дальше дренаж без ожидания
-//        size_t got = xStreamBufferReceive(g_uartRxStream, tmp, sizeof(tmp), portMAX_DELAY);
-//        if (got > 0) {
-//            process_bytes_in_task(tmp, got);
-//        }
-    }
+//    for (;;)
+//    {
+//        (void)Uart3_CommsProcessOnce(50); // ждём первый байт до 50мс, дальше дренаж без ожидания
+////        size_t got = xStreamBufferReceive(g_uartRxStream, tmp, sizeof(tmp), portMAX_DELAY);
+////        if (got > 0) {
+////            process_bytes_in_task(tmp, got);
+////        }
+//    }
 }
 
 // Единственный TX-таск (UART3 DMA)
@@ -363,29 +361,29 @@ void UartTx_Task(void *arg)
 {
     (void)arg;
 
-    for (;;)
-    {
-        size_t n = xMessageBufferReceive(s_mb, s_staging, sizeof(s_staging), portMAX_DELAY);
-        if (n == 0) continue;
-
-        size_t off = 0;
-        while (off < n) {
-
-            size_t chunk = n - off;
-            if (chunk > sizeof(s_staging)) chunk = sizeof(s_staging);
-
-            // ВНИМАНИЕ: s_staging уже содержит данные [0..n),
-            // поэтому для chunk < sizeof(staging) используем смещение.
-            if (HAL_UART_Transmit_DMA(&huart3, (uint8_t*)(s_staging + off), (uint16_t)chunk) != HAL_OK) {
-                vTaskDelay(pdMS_TO_TICKS(1));
-                continue;
-            }
-
-            // Ждем завершение DMA
-            xSemaphoreTake(s_txDone, portMAX_DELAY);
-            off += chunk;
-        }
-    }
+//    for (;;)
+//    {
+//        size_t n = xMessageBufferReceive(s_mb, s_staging, sizeof(s_staging), portMAX_DELAY);
+//        if (n == 0) continue;
+//
+//        size_t off = 0;
+//        while (off < n) {
+//
+//            size_t chunk = n - off;
+//            if (chunk > sizeof(s_staging)) chunk = sizeof(s_staging);
+//
+//            // ВНИМАНИЕ: s_staging уже содержит данные [0..n),
+//            // поэтому для chunk < sizeof(staging) используем смещение.
+//            if (HAL_UART_Transmit_DMA(&huart3, (uint8_t*)(s_staging + off), (uint16_t)chunk) != HAL_OK) {
+//                vTaskDelay(pdMS_TO_TICKS(1));
+//                continue;
+//            }
+//
+//            // Ждем завершение DMA
+//            xSemaphoreTake(s_txDone, portMAX_DELAY);
+//            off += chunk;
+//        }
+//    }
 }
 
 // ===== UART DMA TX complete callback -> give semaphore =====

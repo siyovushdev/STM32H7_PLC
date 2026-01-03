@@ -112,7 +112,7 @@ static const uint32_t DI_DEBOUNCE_DEFAULT_MS = 30; // по умолчанию 30
 
 /* ================== Внутренние хелперы ================== */
 
-static void plc_node_reset_runtime(PlcNode *n) {
+void plc_node_reset_runtime(PlcNode *n) {
     n->out.b = false;
     n->out.i = 0;
     n->out.f = 0.0f;
@@ -130,10 +130,21 @@ static void plc_node_reset_runtime(PlcNode *n) {
     n->force_bool = false;
     n->force_left_ms = 0;
 
+    // --- PID runtime ---
+    n->pid_i = 0.0f;
+    n->pid_prev_meas = 0.0f;
+    n->pid_inited = false;
+
+    // --- Filter / Ramp runtime ---
+    n->filt_prev = 0.0f;
+    n->filt_inited = false;
+
+    n->ramp_prev = 0.0f;
+    n->ramp_inited = false;
 
     n->log_accum_ms = 0;
 
-    // --- CTU / CTD / CTUD ---
+    // CTU/CTD/CTUD
     n->acc = 0;
     n->prev_clk = false;
 
@@ -154,7 +165,12 @@ static inline PlcValueType node_type(const PlcGraph* g, int16_t idx) {
     return g->nodes[idx].valueType;
 }
 
-static inline bool is_bool_node(const PlcGraph* g, int16_t idx) {
+static bool is_bool_node32(const PlcGraph *g, int idx) {
+    if (idx < 0 || idx >= (int)g->nodeCount) return false;
+    return g->nodes[idx].valueType == PLC_VAL_BOOL;
+}
+
+static inline bool is_bool_node16(const PlcGraph* g, int16_t idx) {
     return node_type(g, idx) == PLC_VAL_BOOL;
 }
 
@@ -201,8 +217,8 @@ bool plc_validate_graph(PlcGraph *g) {
         }
 
         // --- 2. Проверка типа ---
-        if (n->type > PLC_NODE_CONST_FLOAT) {
-            LOGT("PLC", "node[%u] type=%u > PLC_NODE_LIMIT", i, (unsigned) n->type);
+        if (n->type > PLC_NODE_MAX) {
+            LOGT("PLC", "node[%u] type=%u > PLC_NODE_MAX", i, (unsigned) n->type);
             return false;
         }
 
@@ -254,7 +270,7 @@ bool plc_validate_graph(PlcGraph *g) {
                     LOGT("PLC", "node[%u] AND/OR requires inA and inB", i);
                     return false;
                 }
-                if (!is_bool_node(g, n->inA) || !is_bool_node(g, n->inB)) {
+                if (!is_bool_node16(g, n->inA) || !is_bool_node16(g, n->inB)) {
                     LOGT("PLC", "node[%u] AND/OR requires BOOL inputs", i);
                     return false;
                 }
@@ -287,8 +303,12 @@ bool plc_validate_graph(PlcGraph *g) {
                     LOGT("PLC", "node[%u] MUX2 requires inA>=0 and inB>=0", i);
                     return false;
                 }
-                if (n->paramInt < 0 || (uint16_t) n->paramInt >= i) {
+                if (n->paramInt < 0 || n->paramInt >= (int32_t)i) {
                     LOGT("PLC", "node[%u] MUX2 selector paramInt=%d invalid (< %u)", i, (int) n->paramInt, i);
+                    return false;
+                }
+                if (!is_bool_node32(g, n->paramInt)) {
+                    LOGT("PLC", "node[%u] MUX2 selector must be BOOL (sel=%d)", i, (int)n->paramInt);
                     return false;
                 }
                 break;
@@ -1443,9 +1463,15 @@ void plc_graph_step(PlcGraph *g, uint32_t dt_ms) {
                 self->out.b = y;
 
 #if PLC_LOG_ENABLED && PLC_LOG_GRAPH
-                if (y != prev)
-                    LOGT(PLC_LOG_TAG, "HYST[%u] x=%.3f -> %u (lo=%.3f hi=%.3f)", (unsigned) i, (double) x, (unsigned) y,
-                         (double) lo, (double) hi);
+                if (y != prev) {
+                    const char* why = (x >= hi) ? "x>=hi => ON" : (x <= lo) ? "x<=lo => OFF" : "hold";
+                    LOGT(PLC_LOG_TAG,
+                         "HYST[%u] %s | x=%.3f prev=%u -> %u | lo=%.3f hi=%.3f (center=%.3f h=%.3f)",
+                         (unsigned)i, why,
+                         (double)x, (unsigned)prev, (unsigned)y,
+                         (double)lo, (double)hi,
+                         (double)center, (double)h);
+                }
 #endif
                 break;
             }
