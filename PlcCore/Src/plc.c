@@ -9,7 +9,7 @@
 #endif
 
 #ifndef PLC_LOG_ENABLED
-#define PLC_LOG_ENABLED 1
+#define PLC_LOG_ENABLED 0
 #endif
 
 // Общие флаги

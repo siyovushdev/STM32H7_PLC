@@ -78,12 +78,12 @@ static void eth_print_state(const char* reason)
 
     int32_t phy = eth_phy_get_link_state();
 
-//    printf("[ETH] %s: netif_up=%s link_up=%s phy=%ld ip=%s mask=%s gw=%s\r\n",
-//           reason,
-//           yesno(netif_is_up(&gnetif)),
-//           yesno(netif_is_link_up(&gnetif)),
-//           (long)phy,
-//           a, m, g);
+    printf("[ETH] %s: netif_up=%s link_up=%s phy=%ld ip=%s mask=%s gw=%s\r\n",
+           reason,
+           yesno(netif_is_up(&gnetif)),
+           yesno(netif_is_link_up(&gnetif)),
+           (long)phy,
+           a, m, g);
 }
 
 // ВАЖНО: callbacks только флаг — без printf (чтобы не раздувать EthLink stack)
@@ -110,6 +110,27 @@ static void EthMonTask(void* arg)
     }
 }
 
+static void MemReport_Print(void)
+{
+    // Heap (FreeRTOS)
+    uint32_t heapFree = (uint32_t)xPortGetFreeHeapSize();
+    uint32_t heapMin  = (uint32_t)xPortGetMinimumEverFreeHeapSize();
+    uint32_t heapUsedMax = (uint32_t)(configTOTAL_HEAP_SIZE - heapMin);
+
+    printf("[MEM] heap nowFree=%lu minEverFree=%lu heapUsedMax=%lu of %lu\r\n",
+           (unsigned long)heapFree,
+           (unsigned long)heapMin,
+           (unsigned long)heapUsedMax,
+           (unsigned long)configTOTAL_HEAP_SIZE);
+
+    // Stacks (пример по твоим задачам)
+    printf("[MEM] HWM free bytes: PLC=%lu COMMS=%lu UART=%lu INIT=%lu\r\n",
+           (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
+           (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
+           (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
+           (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t));
+}
+
 // ===== Diagnostics (HWM/heap) =====
 static void TaskDiag(void *arg)
 {
@@ -117,21 +138,14 @@ static void TaskDiag(void *arg)
 
     for (;;)
     {
-//        printf("[HWM] PLC=%lu COMMS=%lu UART=%lu INIT=%lu heap=%lu min=%lu\r\n",
-//               (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
-//               (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
-//               (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
-//               (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t),
-//               (unsigned long)xPortGetFreeHeapSize(),
-//               (unsigned long)xPortGetMinimumEverFreeHeapSize());
-
-//        TaskHandle_t hEth = xTaskGetHandle("EthLink");
-//        if (hEth) {
-//            UBaseType_t freeWords = uxTaskGetStackHighWaterMark(hEth);
-//            printf("[HWM] EthLink free=%lu words (%lu bytes)\r\n",
-//                   (unsigned long)freeWords,
-//                   (unsigned long)(freeWords * 4u));
-//        }
+        MemReport_Print();
+        printf("[HWM] PLC=%lu COMMS=%lu UART=%lu INIT=%lu heap=%lu min=%lu\r\n",
+               (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
+               (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
+               (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
+               (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t),
+               (unsigned long)xPortGetFreeHeapSize(),
+               (unsigned long)xPortGetMinimumEverFreeHeapSize());
 
         osDelay(5000);
     }
@@ -419,31 +433,31 @@ void init_rtos(void)
 
     const osThreadAttr_t plcAttr = {
             .name = "PLC",
-            .stack_size = 8192,
+            .stack_size = 4096,
             .priority = osPriorityHigh
     };
 
     const osThreadAttr_t commsAttr = {
             .name = "COMMS",
-            .stack_size = 8192,
+            .stack_size = 2048,
             .priority = osPriorityAboveNormal
     };
 
     const osThreadAttr_t uartTxAttr = {
             .name = "uart_tx",
-            .stack_size = 4096,
+            .stack_size = 1024,
             .priority = osPriorityAboveNormal
     };
 
     const osThreadAttr_t initAttr = {
             .name = "Init",
-            .stack_size = 8192,
+            .stack_size = 2048,
             .priority = osPriorityNormal
     };
 
     const osThreadAttr_t diagAttr = {
             .name = "Diag",
-            .stack_size = 2048,
+            .stack_size = 1028,
             .priority = osPriorityLow
     };
 
