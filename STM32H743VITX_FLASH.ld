@@ -43,7 +43,8 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Specify the memory areas */
 MEMORY
 {
-  FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 2048K
+  FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 1920K   /* 2048K - 128K */
+  PERSIST (rx)   : ORIGIN = 0x081E0000, LENGTH = 128K    /* reserved for PLC persist */
   DTCMRAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 128K
   RAM_D1 (xrw)   : ORIGIN = 0x24000000, LENGTH = 512K
   RAM_D2 (xrw)   : ORIGIN = 0x30000000, LENGTH = 288K
@@ -55,13 +56,36 @@ MEMORY
 SECTIONS
 {
 
-.dma_buf (NOLOAD) :
-{
-  . = ALIGN(32);
-  *(.dma_buf)
-  *(.dma_buf*)
-  . = ALIGN(32);
-} >RAM_D2
+    .d3_bss (NOLOAD) :
+    {
+      . = ALIGN(32);
+      *(.d3_bss)
+      *(.d3_bss*)
+      . = ALIGN(32);
+    } >RAM_D3
+
+    .dtcm_bss (NOLOAD) :
+    {
+      . = ALIGN(32);
+      *(.dtcm_bss)
+      *(.dtcm_bss*)
+      . = ALIGN(32);
+    } >DTCMRAM
+    /* Reserved flash for PLC persist (do not place code/data here) */
+    .persist_reserve (NOLOAD) :
+    {
+      . = ALIGN(32);
+      KEEP(*(.persist_reserve))
+      . = ALIGN(32);
+    } >PERSIST
+
+    .dma_buf (NOLOAD) :
+    {
+      . = ALIGN(32);
+      *(.dma_buf)
+      *(.dma_buf*)
+      . = ALIGN(32);
+    } >RAM_D2
      /* Modification start */
       .lwip_sec (NOLOAD) :
       {

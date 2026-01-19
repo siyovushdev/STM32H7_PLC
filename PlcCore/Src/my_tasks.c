@@ -26,6 +26,8 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include "plc_persist.h"
+
 
 // ===== UART RX/TX plumbing =====
 #ifndef UART_STREAM_SIZE
@@ -98,7 +100,7 @@ static void EthMonTask(void* arg)
     for (;;)
     {
         uint32_t now = osKernelGetTickCount();
-        if (now - last >= 1000) {
+        if (now - last >= 10000) {
             last = now;
             eth_print_state("tick");
             if (g_eth_evt) {
@@ -106,7 +108,7 @@ static void EthMonTask(void* arg)
                 eth_print_state("evt");
             }
         }
-        osDelay(50);
+        osDelay(1000);
     }
 }
 
@@ -147,7 +149,7 @@ static void TaskDiag(void *arg)
                (unsigned long)xPortGetFreeHeapSize(),
                (unsigned long)xPortGetMinimumEverFreeHeapSize());
 
-        osDelay(5000);
+        osDelay(10000);
     }
 }
 
@@ -179,7 +181,7 @@ void TaskInitial(void *arg)
     osThreadNew(EthMonTask, NULL, &monAttr);
 
     for (;;) {
-        osDelay(1000);
+        osDelay(10000);
     }
 }
 
@@ -250,24 +252,53 @@ static void prof_log_and_reset(uint32_t period_ms, uint32_t heapFree, uint32_t h
     prof_reset();
 }
 
+// ---- DWT cycles -> microseconds (safe) ----
+static inline uint32_t cycles_to_us(uint32_t cycles)
+{
+    uint32_t hz = SystemCoreClock;
+    if (hz == 0u) hz = 1u;
+    // us = cycles * 1e6 / Hz (64-bit to avoid truncation)
+    return (uint32_t)(((uint64_t)cycles * 1000000ull) / (uint64_t)hz);
+}
+
+static inline uint32_t dwt_now(void) { return DWT->CYCCNT; }
+
+static inline uint32_t dwt_diff(uint32_t a, uint32_t b) {
+    return (uint32_t)(b - a); // uint wrap ok
+}
+
+
 void TaskPlcScan(void *arg)
 {
     (void)arg;
     plc_mem_init();
 
     // ---- DWT init for microsecond profiling (Cortex-M7) ----
+    SystemCoreClockUpdate();
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
     uint32_t next = osKernelGetTickCount();
     uint32_t prevPeriod = 10u;
+    static uint32_t s_prev_cycle_start_tick = 0;
 
     uint32_t lastLogTick = osKernelGetTickCount();
     prof_reset();
 
     for (;;)
     {
+        uint32_t cycle_start_tick = osKernelGetTickCount();
+        uint32_t cycle_start_cyc  = DWT->CYCCNT;
+
+// реальный период между стартами циклов
+        uint32_t realCycleMs = 0;
+        if (s_prev_cycle_start_tick != 0) {
+            realCycleMs = cycle_start_tick - s_prev_cycle_start_tick;
+        }
+        s_prev_cycle_start_tick = cycle_start_tick;
+        if (realCycleMs) plc_metrics_on_cycle_ms(realCycleMs);
+
         uint32_t period;
         taskENTER_CRITICAL();
         period = g_activeGraphValid ? g_activeGraph.cycleMs : 10u;
@@ -278,7 +309,7 @@ void TaskPlcScan(void *arg)
         if (period > 1000) period = 1000;
 
         if (period != prevPeriod) {
-            next = osKernelGetTickCount();
+            next = cycle_start_tick;
             prevPeriod = period;
         }
 
@@ -286,7 +317,7 @@ void TaskPlcScan(void *arg)
         uint32_t c0 = DWT->CYCCNT;
         uint32_t pre_cmds = CborMsg_Pump(8u, 0u);
         uint32_t c1 = DWT->CYCCNT;
-        uint32_t pre_us = (c1 - c0) / (SystemCoreClock / 1000000u);
+        uint32_t pre_us = cycles_to_us((uint32_t)(c1 - c0));
 
         s_prof.pre_cmd_sum += pre_cmds;
         prof_add_max(&s_prof.pre_cmd_max, pre_cmds);
@@ -300,13 +331,14 @@ void TaskPlcScan(void *arg)
         plc_tick(start);
         uint32_t t1 = DWT->CYCCNT;
 
-        uint32_t tick_us = (t1 - t0) / (SystemCoreClock / 1000000u);
+        uint32_t tick_us = cycles_to_us((uint32_t)(t1 - t0));
 
         s_prof.tick_us_sum += tick_us;
         prof_add_max(&s_prof.tick_us_max, tick_us);
 
         uint32_t end = osKernelGetTickCount();
-        plc_metrics_on_cycle(end - start, period);
+
+        plc_metrics_on_cycle_us(tick_us, period);
 
         // -------- window pump profile --------
         next += period;
@@ -326,7 +358,7 @@ void TaskPlcScan(void *arg)
             uint32_t w0 = DWT->CYCCNT;
             uint32_t done = CborMsg_Pump(8u, remain);
             uint32_t w1 = DWT->CYCCNT;
-            uint32_t w_us = (w1 - w0) / (SystemCoreClock / 1000000u);
+            uint32_t w_us = cycles_to_us((uint32_t)(w1 - w0));
 
             win_cmds_total += done;
             win_us_total += w_us;
@@ -343,7 +375,7 @@ void TaskPlcScan(void *arg)
 
         // -------- 1s log --------
         uint32_t nowTick = osKernelGetTickCount();
-        if ((int32_t)(nowTick - lastLogTick) >= 1000) {
+        if ((int32_t)(nowTick - lastLogTick) >= 10000) {
             lastLogTick = nowTick;
 
             // если хочешь — подставь свои heap методы (FreeRTOS):
@@ -352,6 +384,10 @@ void TaskPlcScan(void *arg)
 
             prof_log_and_reset(period, heapFree, heapMin);
         }
+
+        uint32_t cycle_end_cyc = DWT->CYCCNT;
+        uint32_t workUs = cycles_to_us((uint32_t)(cycle_end_cyc - cycle_start_cyc));
+        plc_metrics_on_work_us(workUs);
 
         osDelayUntil(next);
     }
@@ -437,17 +473,17 @@ void init_rtos(void)
             .priority = osPriorityHigh
     };
 
-    const osThreadAttr_t commsAttr = {
-            .name = "COMMS",
-            .stack_size = 2048,
-            .priority = osPriorityAboveNormal
-    };
+//    const osThreadAttr_t commsAttr = {
+//            .name = "COMMS",
+//            .stack_size = 2048,
+//            .priority = osPriorityAboveNormal
+//    };
 
-    const osThreadAttr_t uartTxAttr = {
-            .name = "uart_tx",
-            .stack_size = 1024,
-            .priority = osPriorityAboveNormal
-    };
+//    const osThreadAttr_t uartTxAttr = {
+//            .name = "uart_tx",
+//            .stack_size = 1024,
+//            .priority = osPriorityAboveNormal
+//    };
 
     const osThreadAttr_t initAttr = {
             .name = "Init",
@@ -465,13 +501,13 @@ void init_rtos(void)
     CHECK_OK(thPlc != NULL, "Task PLC");
     hPlc = (TaskHandle_t)thPlc;
 
-    thComms = osThreadNew(TaskComms, NULL, &commsAttr);
-    CHECK_OK(thComms != NULL, "Task COMMS");
-    hComms = (TaskHandle_t)thComms;
-
-    thUartTx = osThreadNew(UartTx_Task, NULL, &uartTxAttr);
-    CHECK_OK(thUartTx != NULL, "Task uart_tx");
-    hUartTx = (TaskHandle_t)thUartTx;
+//    thComms = osThreadNew(TaskComms, NULL, &commsAttr);
+//    CHECK_OK(thComms != NULL, "Task COMMS");
+//    hComms = (TaskHandle_t)thComms;
+//
+//    thUartTx = osThreadNew(UartTx_Task, NULL, &uartTxAttr);
+//    CHECK_OK(thUartTx != NULL, "Task uart_tx");
+//    hUartTx = (TaskHandle_t)thUartTx;
 
     thInit = osThreadNew(TaskInitial, NULL, &initAttr);
     CHECK_OK(thInit != NULL, "Task Init");
@@ -479,6 +515,15 @@ void init_rtos(void)
 
     thDiag = osThreadNew(TaskDiag, NULL, &diagAttr);
     CHECK_OK(thDiag != NULL, "Task Diag");
+
+    // ---- AUTO-LOAD saved active graph on boot ----
+    // Если нет сохранения - вернет false, это нормально.
+    if (plc_persist_load()) {
+        printf("[PERSIST] auto-load OK\r\n");
+    } else {
+        printf("[PERSIST] auto-load skipped (no saved graph)\r\n");
+    }
+
 
     CHECK_OK(osKernelStart() == osOK, "osKernelStart");
 

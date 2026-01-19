@@ -286,6 +286,26 @@ void init_rtos(void);
 
 void plc_hw_reset_outputs(void);
 
+// ---- PLC runtime metrics (microseconds) ----
+extern uint32_t g_scan_cnt;
+extern uint64_t g_scan_us_accum;
+extern uint32_t g_scan_us_max;
+extern uint32_t g_scan_long_steps;
+
+// call from TaskPlcScan once per cycle
+void plc_metrics_on_cycle_us(uint32_t execUs, uint32_t periodMs);
+
+extern uint32_t g_work_cnt;
+extern uint64_t g_work_us_accum;
+extern uint32_t g_work_us_max;
+
+extern uint32_t g_cycle_cnt;
+extern uint64_t g_cycle_ms_accum;
+extern uint32_t g_cycle_ms_max;
+
+void plc_metrics_on_work_us(uint32_t workUs);
+void plc_metrics_on_cycle_ms(uint32_t realCycleMs);
+
 
 #ifdef __cplusplus
 }

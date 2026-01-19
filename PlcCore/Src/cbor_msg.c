@@ -337,11 +337,6 @@ void proto_get_counters(uint32_t *rx_ok, uint32_t *rx_crc, uint32_t *rx_parse, u
     if(tx_ok) *tx_ok = g_tx_frames;
 }
 
-// ---- PLC runtime metrics ----
-extern uint32_t g_scan_cnt;
-extern uint32_t g_scan_ms_accum;     // сумма длительностей шага (мс)
-extern uint16_t g_scan_ms_max;       // максимум за период
-extern uint32_t g_scan_long_steps;   // шагов > g_activeGraph.cycleMs
 void send_status_reply(CborReply *out)
 {
     plc_log_put(PLC_EVT_STATUS_REQ, 0, 0);
@@ -380,11 +375,41 @@ void send_status_reply(CborReply *out)
     if(!_ok(cbor_encode_text_stringz(&map, "cycleMs"))) goto send;
     if(!_ok(cbor_encode_uint(&map, cycle))) goto send;
 
+// scanAvgUs (TOTAL WORK)
+    if(!_ok(cbor_encode_text_stringz(&map, "scanAvgUs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_work_cnt ? (uint32_t)(g_work_us_accum / g_work_cnt) : 0))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "scanMaxUs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_work_us_max))) goto send;
+
+// (опционально) scanAvgMs/scanMaxMs для совместимости со старым UI/ktor
     if(!_ok(cbor_encode_text_stringz(&map, "scanAvgMs"))) goto send;
-    if(!_ok(cbor_encode_uint(&map, g_scan_cnt ? (g_scan_ms_accum / g_scan_cnt) : 0))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_scan_cnt ? (uint32_t)((g_scan_us_accum / g_scan_cnt) / 1000u) : 0))) goto send;
 
     if(!_ok(cbor_encode_text_stringz(&map, "scanMaxMs"))) goto send;
-    if(!_ok(cbor_encode_uint(&map, g_scan_ms_max))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_scan_us_max / 1000u))) goto send;
+
+    // scanTickAvgUs/scanTickMaxUs (движок plc_tick)
+    if(!_ok(cbor_encode_text_stringz(&map, "scanTickAvgUs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_scan_cnt ? (uint32_t)(g_scan_us_accum / g_scan_cnt) : 0))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "scanTickMaxUs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_scan_us_max))) goto send;
+
+// scanWorkAvgUs/scanWorkMaxUs (весь цикл TaskPlcScan без сна)
+    if(!_ok(cbor_encode_text_stringz(&map, "scanWorkAvgUs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_work_cnt ? (uint32_t)(g_work_us_accum / g_work_cnt) : 0))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "scanWorkMaxUs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_work_us_max))) goto send;
+
+// cycleRealAvgMs/cycleRealMaxMs (реальный период между стартами циклов)
+    if(!_ok(cbor_encode_text_stringz(&map, "cycleRealAvgMs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_cycle_cnt ? (uint32_t)(g_cycle_ms_accum / g_cycle_cnt) : 0))) goto send;
+
+    if(!_ok(cbor_encode_text_stringz(&map, "cycleRealMaxMs"))) goto send;
+    if(!_ok(cbor_encode_uint(&map, g_cycle_ms_max))) goto send;
+
 
     if(!_ok(cbor_encode_text_stringz(&map, "scanLongSteps"))) goto send;
     if(!_ok(cbor_encode_uint(&map, g_scan_long_steps))) goto send;
@@ -1411,17 +1436,17 @@ void on_cbor_frame_received(const uint8_t *buf, size_t len, CborReply* out) {
         return;
     }
 
-//    if (strcmp(cmdBuf, "save_active") == 0) {
-//        bool ok = plc_persist_save_active();
-//        send_simple_ack("save_active_ack", ok, out);
-//        return;
-//    }
-//
-//    if (strcmp(cmdBuf, "load_active") == 0) {
-//        bool ok = plc_persist_load_active();
-//        send_simple_ack("load_active_ack", ok, out);
-//        return;
-//    }
+    if (strcmp(cmdBuf, "save_active") == 0) {
+        bool ok = plc_persist_save();
+        send_simple_ack("save_active_ack", ok, out);
+        return;
+    }
+
+    if (strcmp(cmdBuf, "load_active") == 0) {
+        bool ok = plc_persist_load();
+        send_simple_ack("load_active_ack", ok, out);
+        return;
+    }
 
     if (strcmp(cmdBuf, "log_dump") == 0) {
         send_log_dump_reply(out);

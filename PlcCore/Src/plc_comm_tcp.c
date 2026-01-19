@@ -30,7 +30,7 @@
 #endif
 
 #ifndef PLC_TCP_MAX_PAYLOAD
-#define PLC_TCP_MAX_PAYLOAD           (64u * 1024u)
+#define PLC_TCP_MAX_PAYLOAD           (32u * 1024u)
 #endif
 
 #ifndef PLC_TCP_MAX_FRAMES_PER_PUMP
@@ -46,7 +46,7 @@
 __attribute__((aligned(32)))
 static uint8_t s_tcp_ring[PLC_TCP_RING_CAP];
 
-__attribute__((aligned(32)))
+__attribute__((section(".d3_bss"), aligned(32)))
 static uint8_t s_payload_buf[PLC_TCP_MAX_PAYLOAD];
 
 __attribute__((aligned(32)))
