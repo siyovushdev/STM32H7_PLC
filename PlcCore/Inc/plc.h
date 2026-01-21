@@ -198,21 +198,22 @@ extern bool g_stagingGraphValid;
 
 extern volatile bool g_needSwapGraph;
 
+extern volatile bool g_needLoadActive;
 /* ================== Команды из TaskComms -> TaskPlcScan ================== */
 
-typedef enum {
-    CMD_FORCE_OUTPUT = 1,
-    CMD_SET_NODE_PARAM = 2,
-    // можно расширять
-} PlcCmdType;
-
-// команда на ПЛК-движок
-typedef struct {
-    PlcCmdType type;
-    uint16_t   nodeIndex; // к какому узлу относится (например DIGITAL_OUT)
-    uint32_t   value;     // значение (например 1/0 или новое значение порога)
-    uint32_t   holdMs;    // для FORCE_OUTPUT: сколько мс держать
-} PlcCmd;
+//typedef enum {
+//    CMD_FORCE_OUTPUT = 1,
+//    CMD_SET_NODE_PARAM = 2,
+//    // можно расширять
+//} PlcCmdType;
+//
+//// команда на ПЛК-движок
+//typedef struct {
+//    PlcCmdType type;
+//    uint16_t   nodeIndex; // к какому узлу относится (например DIGITAL_OUT)
+//    uint32_t   value;     // значение (например 1/0 или новое значение порога)
+//    uint32_t   holdMs;    // для FORCE_OUTPUT: сколько мс держать
+//} PlcCmd;
 
 // Очередь команд
 //extern QueueHandle_t plcCmdQueue;

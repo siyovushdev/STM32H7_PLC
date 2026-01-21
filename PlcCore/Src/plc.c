@@ -88,6 +88,7 @@ static uint32_t s_tick_last_hb = 0;
 // Утилиты
 static inline int32_t iabs32(int32_t v) { return v < 0 ? -v : v; }
 
+volatile bool g_needLoadActive = false;
 
 PlcGraph g_activeGraph;
 PlcGraph g_stagingGraph;

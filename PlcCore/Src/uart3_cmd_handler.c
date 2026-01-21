@@ -214,12 +214,28 @@ bool Uart3_CommsProcessOnce(uint32_t waitMs)
                 }
 
                 // ✅ Single-writer: execute command in PLC task via queue/RPC
-                CborReply reply;
-                memset(&reply, 0, sizeof(reply));
-                (void)CborMsg_RpcCall(s_payload, (size_t)s_rxLen, &reply, UART3_RPC_TIMEOUT_MS);
+                PlcCmd cmd;
+                PlcReply rep;
+                CborReply outBytes;
+                memset(&outBytes, 0, sizeof(outBytes));
 
-                // send reply over UART (legacy framed)
-                send_reply_frame(&reply);
+                if (!CborProto_DecodeCmd(s_payload, (size_t)s_rxLen, &cmd)) {
+                    proto_count_rx_parse_err();
+                    rx_reset();
+                    break;
+                }
+                proto_count_rx_frame_ok();
+
+                if (!PlcMsg_RpcCallCmd(&cmd, &rep, UART3_RPC_TIMEOUT_MS)) {
+                    rx_reset();
+                    break;
+                }
+
+                if (CborProto_EncodeReply(&rep, &outBytes)) {
+                    send_reply_frame(&outBytes);
+                }
+                rx_reset();
+
 
                 processedAny = true;
                 rx_reset();

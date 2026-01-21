@@ -46,9 +46,9 @@
 #define UART_STAGING_SZ         1024u
 #endif
 
-StreamBufferHandle_t  g_uartRxStream;
+StreamBufferHandle_t g_uartRxStream;
 MessageBufferHandle_t s_mb;
-SemaphoreHandle_t     s_txDone;
+SemaphoreHandle_t s_txDone;
 
 extern UART_HandleTypeDef huart3;
 static uint8_t s_staging[UART_STAGING_SZ];
@@ -69,10 +69,9 @@ static TaskHandle_t hInit;
 extern struct netif gnetif;
 static volatile uint32_t g_eth_evt = 0;
 
-static const char* yesno(bool v) { return v ? "YES" : "NO"; }
+static const char *yesno(bool v) { return v ? "YES" : "NO"; }
 
-static void eth_print_state(const char* reason)
-{
+static void eth_print_state(const char *reason) {
     char a[16], m[16], g[16];
     ip4addr_ntoa_r(netif_ip4_addr(&gnetif), a, sizeof(a));
     ip4addr_ntoa_r(netif_ip4_netmask(&gnetif), m, sizeof(m));
@@ -84,82 +83,83 @@ static void eth_print_state(const char* reason)
            reason,
            yesno(netif_is_up(&gnetif)),
            yesno(netif_is_link_up(&gnetif)),
-           (long)phy,
+           (long) phy,
            a, m, g);
 }
 
 // ВАЖНО: callbacks только флаг — без printf (чтобы не раздувать EthLink stack)
-static void netif_status_cb(struct netif* n) { (void)n; g_eth_evt = 1; }
-static void netif_link_cb  (struct netif* n) { (void)n; g_eth_evt = 1; }
+static void netif_status_cb(struct netif *n) {
+    (void) n;
+    g_eth_evt = 1;
+}
 
-static void EthMonTask(void* arg)
-{
-    (void)arg;
+static void netif_link_cb(struct netif *n) {
+    (void) n;
+    g_eth_evt = 1;
+}
+
+static void EthMonTask(void *arg) {
+    (void) arg;
     uint32_t last = 0;
 
-    for (;;)
-    {
-        uint32_t now = osKernelGetTickCount();
-        if (now - last >= 10000) {
-            last = now;
-            eth_print_state("tick");
-            if (g_eth_evt) {
-                g_eth_evt = 0;
-                eth_print_state("evt");
-            }
-        }
+    for (;;) {
+//        uint32_t now = osKernelGetTickCount();
+//        if (now - last >= 10000) {
+//            last = now;
+//            eth_print_state("tick");
+//            if (g_eth_evt) {
+//                g_eth_evt = 0;
+//                eth_print_state("evt");
+//            }
+//        }
         osDelay(1000);
     }
 }
 
-static void MemReport_Print(void)
-{
+static void MemReport_Print(void) {
     // Heap (FreeRTOS)
-    uint32_t heapFree = (uint32_t)xPortGetFreeHeapSize();
-    uint32_t heapMin  = (uint32_t)xPortGetMinimumEverFreeHeapSize();
-    uint32_t heapUsedMax = (uint32_t)(configTOTAL_HEAP_SIZE - heapMin);
+    uint32_t heapFree = (uint32_t) xPortGetFreeHeapSize();
+    uint32_t heapMin = (uint32_t) xPortGetMinimumEverFreeHeapSize();
+    uint32_t heapUsedMax = (uint32_t) (configTOTAL_HEAP_SIZE - heapMin);
 
     printf("[MEM] heap nowFree=%lu minEverFree=%lu heapUsedMax=%lu of %lu\r\n",
-           (unsigned long)heapFree,
-           (unsigned long)heapMin,
-           (unsigned long)heapUsedMax,
-           (unsigned long)configTOTAL_HEAP_SIZE);
+           (unsigned long) heapFree,
+           (unsigned long) heapMin,
+           (unsigned long) heapUsedMax,
+           (unsigned long) configTOTAL_HEAP_SIZE);
 
     // Stacks (пример по твоим задачам)
     printf("[MEM] HWM free bytes: PLC=%lu COMMS=%lu UART=%lu INIT=%lu\r\n",
-           (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
-           (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
-           (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
-           (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t));
+           (unsigned long) uxTaskGetStackHighWaterMark(hPlc) * sizeof(StackType_t),
+           (unsigned long) uxTaskGetStackHighWaterMark(hComms) * sizeof(StackType_t),
+           (unsigned long) uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
+           (unsigned long) uxTaskGetStackHighWaterMark(hInit) * sizeof(StackType_t));
 }
 
 // ===== Diagnostics (HWM/heap) =====
-static void TaskDiag(void *arg)
-{
-    (void)arg;
+static void TaskDiag(void *arg) {
+    (void) arg;
 
-    for (;;)
-    {
-        MemReport_Print();
-        printf("[HWM] PLC=%lu COMMS=%lu UART=%lu INIT=%lu heap=%lu min=%lu\r\n",
-               (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
-               (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
-               (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
-               (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t),
-               (unsigned long)xPortGetFreeHeapSize(),
-               (unsigned long)xPortGetMinimumEverFreeHeapSize());
+    for (;;) {
+//        MemReport_Print();
+//        printf("[HWM] PLC=%lu COMMS=%lu UART=%lu INIT=%lu heap=%lu min=%lu\r\n",
+//               (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
+//               (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
+//               (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
+//               (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t),
+//               (unsigned long)xPortGetFreeHeapSize(),
+//               (unsigned long)xPortGetMinimumEverFreeHeapSize());
 
         osDelay(10000);
     }
 }
 
 // ===== Tasks =====
-void TaskInitial(void *arg)
-{
-    (void)arg;
+void TaskInitial(void *arg) {
+    (void) arg;
 
     MX_USB_DEVICE_Init();
-    printf("&gnetif=%p\r\n", (void*)&gnetif);
+    printf("&gnetif=%p\r\n", (void *) &gnetif);
 
     MX_LWIP_Init();
 
@@ -212,11 +212,10 @@ static PlcProf1s s_prof;
 
 static inline void prof_reset(void) { memset(&s_prof, 0, sizeof(s_prof)); }
 
-static inline void prof_add_max(uint32_t* pMax, uint32_t v) { if (v > *pMax) *pMax = v; }
+static inline void prof_add_max(uint32_t *pMax, uint32_t v) { if (v > *pMax) *pMax = v; }
 
 // call once per second
-static void prof_log_and_reset(uint32_t period_ms, uint32_t heapFree, uint32_t heapMin)
-{
+static void prof_log_and_reset(uint32_t period_ms, uint32_t heapFree, uint32_t heapMin) {
     if (s_prof.cycles == 0) return;
 
     uint32_t tick_avg = s_prof.tick_us_sum / s_prof.cycles;
@@ -232,138 +231,190 @@ static void prof_log_and_reset(uint32_t period_ms, uint32_t heapFree, uint32_t h
          "prePump cmds avg=%lu max=%lu time avg=%luus max=%luus | "
          "winPump cmds avg=%lu max=%lu time avg=%luus max=%luus | "
          "heapFree=%lu heapMin=%lu\r\n",
-         (unsigned long)period_ms,
-         (unsigned long)s_prof.cycles,
-         (unsigned long)s_prof.overruns,
-         (unsigned long)tick_avg,
-         (unsigned long)s_prof.tick_us_max,
-         (unsigned long)pre_cmd_avg,
-         (unsigned long)s_prof.pre_cmd_max,
-         (unsigned long)pre_us_avg,
-         (unsigned long)s_prof.pre_us_max,
-         (unsigned long)win_cmd_avg,
-         (unsigned long)s_prof.win_cmd_max,
-         (unsigned long)win_us_avg,
-         (unsigned long)s_prof.win_us_max,
-         (unsigned long)heapFree,
-         (unsigned long)heapMin
+         (unsigned long) period_ms,
+         (unsigned long) s_prof.cycles,
+         (unsigned long) s_prof.overruns,
+         (unsigned long) tick_avg,
+         (unsigned long) s_prof.tick_us_max,
+         (unsigned long) pre_cmd_avg,
+         (unsigned long) s_prof.pre_cmd_max,
+         (unsigned long) pre_us_avg,
+         (unsigned long) s_prof.pre_us_max,
+         (unsigned long) win_cmd_avg,
+         (unsigned long) s_prof.win_cmd_max,
+         (unsigned long) win_us_avg,
+         (unsigned long) s_prof.win_us_max,
+         (unsigned long) heapFree,
+         (unsigned long) heapMin
     );
 
     prof_reset();
 }
 
 // ---- DWT cycles -> microseconds (safe) ----
-static inline uint32_t cycles_to_us(uint32_t cycles)
-{
+static inline uint32_t cycles_to_us(uint32_t cycles) {
     uint32_t hz = SystemCoreClock;
     if (hz == 0u) hz = 1u;
     // us = cycles * 1e6 / Hz (64-bit to avoid truncation)
-    return (uint32_t)(((uint64_t)cycles * 1000000ull) / (uint64_t)hz);
+    return (uint32_t) (((uint64_t) cycles * 1000000ull) / (uint64_t) hz);
 }
 
 static inline uint32_t dwt_now(void) { return DWT->CYCCNT; }
 
 static inline uint32_t dwt_diff(uint32_t a, uint32_t b) {
-    return (uint32_t)(b - a); // uint wrap ok
+    return (uint32_t) (b - a); // uint wrap ok
 }
 
 
-void TaskPlcScan(void *arg)
-{
-    (void)arg;
+void TaskPlcScan(void *arg) {
+    (void) arg;
+
     plc_mem_init();
 
-    // ---- DWT init for microsecond profiling (Cortex-M7) ----
+    // ---- DWT init (Cortex-M7) ----
     SystemCoreClockUpdate();
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    DWT->CYCCNT = 0;
+    DWT->CYCCNT = 0u;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
-    uint32_t next = osKernelGetTickCount();
-    uint32_t prevPeriod = 10u;
-    static uint32_t s_prev_cycle_start_tick = 0;
+    const uint32_t tickHz = osKernelGetTickFreq(); // ticks per second (обычно 100 или 1000)
+    if (tickHz == 0u) {
+        // защита от деления на 0 (не должно случаться)
+        for (;;) { osDelay(1000); }
+    }
 
-    uint32_t lastLogTick = osKernelGetTickCount();
+    uint32_t nextTick = osKernelGetTickCount(); // ВНИМАНИЕ: ticks
+    uint32_t prevPeriodMs = 10u;
+    uint32_t prevCycleStartTick = 0u;
+
+    uint32_t lastLogTick = osKernelGetTickCount(); // ticks
     prof_reset();
 
-    for (;;)
-    {
-        uint32_t cycle_start_tick = osKernelGetTickCount();
-        uint32_t cycle_start_cyc  = DWT->CYCCNT;
+    // ---- tuning knobs ----
+    const uint32_t GUARD_US_MIN = 200u;
+    const uint32_t GUARD_US_MAX = 1000u;
+    const uint32_t PRE_BUDGET_US = 300u;
+    const uint32_t WIN_MAX_LOOPS = 16u;
+    const uint32_t APPLY_MAX_ITEMS = 8u;
 
-// реальный период между стартами циклов
-        uint32_t realCycleMs = 0;
-        if (s_prev_cycle_start_tick != 0) {
-            realCycleMs = cycle_start_tick - s_prev_cycle_start_tick;
+    for (;;) {
+        // ---- cycle start stamps ----
+        const uint32_t cycleStartTick = osKernelGetTickCount(); // ticks
+        const uint32_t cycleStartCyc = DWT->CYCCNT;
+
+        // ticks -> ms (монотонно)
+        const uint32_t cycleStartMs = (uint32_t) ((uint64_t) cycleStartTick * 1000ull / (uint64_t) tickHz);
+
+        // ---- real period between starts (в ms) ----
+        if (prevCycleStartTick != 0u) {
+            const uint32_t dtTicks = (uint32_t) (cycleStartTick - prevCycleStartTick);
+            const uint32_t realCycleMs = (uint32_t) ((uint64_t) dtTicks * 1000ull / (uint64_t) tickHz);
+            plc_metrics_on_cycle_ms(realCycleMs);
         }
-        s_prev_cycle_start_tick = cycle_start_tick;
-        if (realCycleMs) plc_metrics_on_cycle_ms(realCycleMs);
+        prevCycleStartTick = cycleStartTick;
 
-        uint32_t period;
+        // ---- read cycle period (graph) in ms ----
+        uint32_t periodMs;
         taskENTER_CRITICAL();
-        period = g_activeGraphValid ? g_activeGraph.cycleMs : 10u;
+        periodMs = g_activeGraphValid ? g_activeGraph.cycleMs : 10u;
         taskEXIT_CRITICAL();
 
-        if (period == 0) period = 10u;
-        if (period < 5) period = 5;
-        if (period > 1000) period = 1000;
+        if (periodMs == 0u) periodMs = 10u;
+        if (periodMs < 5u) periodMs = 5u;
+        if (periodMs > 1000u) periodMs = 1000u;
 
-        if (period != prevPeriod) {
-            next = cycle_start_tick;
-            prevPeriod = period;
+        // period in ticks (минимум 1 tick)
+        uint32_t periodTicks = (uint32_t) ((uint64_t) periodMs * (uint64_t) tickHz / 1000ull);
+        if (periodTicks == 0u) periodTicks = 1u;
+
+        // ---- if period changed: resync schedule ----
+        if (periodMs != prevPeriodMs) {
+            nextTick = cycleStartTick;
+            prevPeriodMs = periodMs;
         }
 
-        // -------- prePump profile --------
-        uint32_t c0 = DWT->CYCCNT;
-        uint32_t pre_cmds = CborMsg_Pump(8u, 0u);
-        uint32_t c1 = DWT->CYCCNT;
-        uint32_t pre_us = cycles_to_us((uint32_t)(c1 - c0));
+        const uint32_t periodUs = periodMs * 1000u;
 
-        s_prof.pre_cmd_sum += pre_cmds;
-        prof_add_max(&s_prof.pre_cmd_max, pre_cmds);
-        s_prof.pre_us_sum += pre_us;
-        prof_add_max(&s_prof.pre_us_max, pre_us);
+        // Guard: 2% периода, но в диапазоне [GUARD_US_MIN..GUARD_US_MAX]
+        uint32_t guardUs = periodUs / 50u;
+        if (guardUs < GUARD_US_MIN) guardUs = GUARD_US_MIN;
+        if (guardUs > GUARD_US_MAX) guardUs = GUARD_US_MAX;
 
-        // -------- plc_tick profile --------
-        uint32_t start = osKernelGetTickCount();
+        // =====================================================================
+        // PRE-APPLY
+        // =====================================================================
+        {
+            const uint32_t c0 = DWT->CYCCNT;
+            const uint32_t pre_cmds = PlcMsg_PumpApply(APPLY_MAX_ITEMS, 0u, PRE_BUDGET_US);
+            const uint32_t c1 = DWT->CYCCNT;
 
-        uint32_t t0 = DWT->CYCCNT;
-        plc_tick(start);
-        uint32_t t1 = DWT->CYCCNT;
+            const uint32_t pre_us = cycles_to_us((uint32_t) (c1 - c0));
+            s_prof.pre_cmd_sum += pre_cmds;
+            prof_add_max(&s_prof.pre_cmd_max, pre_cmds);
+            s_prof.pre_us_sum += pre_us;
+            prof_add_max(&s_prof.pre_us_max, pre_us);
+        }
 
-        uint32_t tick_us = cycles_to_us((uint32_t)(t1 - t0));
+        // =====================================================================
+        // SAFE-POINT: deferred load_active (flash operations outside PumpApply)
+        // =====================================================================
+        if (g_needLoadActive) {
+            g_needLoadActive = false;
 
-        s_prof.tick_us_sum += tick_us;
-        prof_add_max(&s_prof.tick_us_max, tick_us);
+            // Реальная загрузка + подготовка staging + запрос активации
+            // (plc_persist_load внутри уже делает upload->staging + plc_request_activate_graph)
+            bool ok = plc_persist_load();
 
-        uint32_t end = osKernelGetTickCount();
+            #if PLC_LOG_ENABLED
+                        LOGT("PERSIST", "deferred load_active: %s", ok ? "OK" : "FAIL");
+            #endif
+        }
 
-        plc_metrics_on_cycle_us(tick_us, period);
+        // =====================================================================
+        // PLC TICK (scan)  <-- ВАЖНО: передаём ms, НЕ ticks
+        // =====================================================================
+        const uint32_t tickStartCyc = DWT->CYCCNT;
+        plc_tick(cycleStartMs);
+        const uint32_t tickEndCyc = DWT->CYCCNT;
 
-        // -------- window pump profile --------
-        next += period;
+        const uint32_t tickUs = cycles_to_us((uint32_t) (tickEndCyc - tickStartCyc));
+        s_prof.tick_us_sum += tickUs;
+        prof_add_max(&s_prof.tick_us_max, tickUs);
 
-        uint32_t win_cmds_total = 0;
-        uint32_t win_us_total = 0;
+        plc_metrics_on_cycle_us(tickUs, periodMs);
 
-        for (;;) {
-            uint32_t now = osKernelGetTickCount();
-            if ((int32_t)(next - now) <= 0) {
-                s_prof.overruns++;   // уже опоздали
+        // =====================================================================
+        // WINDOW APPLY (до дедлайна)
+        // =====================================================================
+        nextTick += periodTicks;  // дедлайн в ticks
+
+        uint32_t win_cmds_total = 0u;
+        uint32_t win_us_total = 0u;
+
+        for (uint32_t loops = 0u; loops < WIN_MAX_LOOPS; loops++) {
+            const uint32_t nowTick = osKernelGetTickCount();
+            const int32_t leftTicks = (int32_t) (nextTick - nowTick);
+
+            if (leftTicks <= 0) {
+                s_prof.overruns++;
                 break;
             }
 
-            uint32_t remain = next - now;
+            // leftUs = leftTicks * 1_000_000 / tickHz
+            uint32_t leftUs = (uint32_t) ((uint64_t) (uint32_t) leftTicks * 1000000ull / (uint64_t) tickHz);
+            if (leftUs <= guardUs) break;
 
-            uint32_t w0 = DWT->CYCCNT;
-            uint32_t done = CborMsg_Pump(8u, remain);
-            uint32_t w1 = DWT->CYCCNT;
-            uint32_t w_us = cycles_to_us((uint32_t)(w1 - w0));
+            uint32_t budgetUs = leftUs - guardUs;
 
+            const uint32_t w0 = DWT->CYCCNT;
+            const uint32_t done = PlcMsg_PumpApply(APPLY_MAX_ITEMS, 0u, budgetUs);
+            const uint32_t w1 = DWT->CYCCNT;
+
+            const uint32_t wUs = cycles_to_us((uint32_t) (w1 - w0));
             win_cmds_total += done;
-            win_us_total += w_us;
+            win_us_total += wUs;
 
-            if (done == 0u) break; // timeout до next
+            if (done == 0u) break;
         }
 
         s_prof.win_cmd_sum += win_cmds_total;
@@ -373,34 +424,47 @@ void TaskPlcScan(void *arg)
 
         s_prof.cycles++;
 
-        // -------- 1s log --------
-        uint32_t nowTick = osKernelGetTickCount();
-        if ((int32_t)(nowTick - lastLogTick) >= 10000) {
-            lastLogTick = nowTick;
-
-            // если хочешь — подставь свои heap методы (FreeRTOS):
-            uint32_t heapFree = (uint32_t)xPortGetFreeHeapSize();
-            uint32_t heapMin  = (uint32_t)xPortGetMinimumEverFreeHeapSize();
-
-            prof_log_and_reset(period, heapFree, heapMin);
-        }
-
-        uint32_t cycle_end_cyc = DWT->CYCCNT;
-        uint32_t workUs = cycles_to_us((uint32_t)(cycle_end_cyc - cycle_start_cyc));
+        // =====================================================================
+        // WORK TIME
+        // =====================================================================
+        const uint32_t cycleEndCyc = DWT->CYCCNT;
+        const uint32_t workUs = cycles_to_us((uint32_t) (cycleEndCyc - cycleStartCyc));
         plc_metrics_on_work_us(workUs);
 
-        osDelayUntil(next);
+        // =====================================================================
+        // DEADLINE MISS / RESYNC (ticks)
+        // =====================================================================
+        const uint32_t endTick = osKernelGetTickCount();
+        const int32_t overTicks = (int32_t) (endTick - nextTick);
+        if (overTicks > 0) {
+            s_prof.overruns++;
+        }
+
+        if ((int32_t) (nextTick - endTick) <= 0) {
+            nextTick = endTick + periodTicks;
+        }
+
+        // =====================================================================
+        // 10s log / prof reset (ticks)
+        // =====================================================================
+        const uint32_t tenSecTicks = 10u * tickHz;
+        if ((int32_t) (endTick - lastLogTick) >= (int32_t) tenSecTicks) {
+            lastLogTick = endTick;
+            const uint32_t heapFree = (uint32_t) xPortGetFreeHeapSize();
+            const uint32_t heapMin = (uint32_t) xPortGetMinimumEverFreeHeapSize();
+//            prof_log_and_reset(periodMs, heapFree, heapMin);
+        }
+
+        osDelayUntil(nextTick); // ожидает ticks
     }
 }
 
 
-void TaskComms(void *arg)
-{
-    (void)arg;
+void TaskComms(void *arg) {
+    (void) arg;
 
-    for (;;)
-    {
-        (void)Uart3_CommsProcessOnce(50); // ждём первый байт до 50мс, дальше дренаж без ожидания
+    for (;;) {
+        (void) Uart3_CommsProcessOnce(50); // ждём первый байт до 50мс, дальше дренаж без ожидания
 //        size_t got = xStreamBufferReceive(g_uartRxStream, tmp, sizeof(tmp), portMAX_DELAY);
 //        if (got > 0) {
 //            process_bytes_in_task(tmp, got);
@@ -409,12 +473,10 @@ void TaskComms(void *arg)
 }
 
 // Единственный TX-таск (UART3 DMA)
-void UartTx_Task(void *arg)
-{
-    (void)arg;
+void UartTx_Task(void *arg) {
+    (void) arg;
 
-    for (;;)
-    {
+    for (;;) {
         size_t n = xMessageBufferReceive(s_mb, s_staging, sizeof(s_staging), portMAX_DELAY);
         if (n == 0) continue;
 
@@ -426,7 +488,7 @@ void UartTx_Task(void *arg)
 
             // ВНИМАНИЕ: s_staging уже содержит данные [0..n),
             // поэтому для chunk < sizeof(staging) используем смещение.
-            if (HAL_UART_Transmit_DMA(&huart3, (uint8_t*)(s_staging + off), (uint16_t)chunk) != HAL_OK) {
+            if (HAL_UART_Transmit_DMA(&huart3, (uint8_t *) (s_staging + off), (uint16_t) chunk) != HAL_OK) {
                 vTaskDelay(pdMS_TO_TICKS(1));
                 continue;
             }
@@ -449,8 +511,7 @@ void UartTx_Task(void *arg)
 //}
 
 // ===== init =====
-void init_rtos(void)
-{
+void init_rtos(void) {
     // FreeRTOS primitives
     g_uartRxStream = xStreamBufferCreate(UART_STREAM_SIZE, UART_TRIGGER_LEVEL);
     CHECK_OK(g_uartRxStream != NULL, "g_uartRxStream");
@@ -465,11 +526,11 @@ void init_rtos(void)
     CHECK_OK(osKernelInitialize() == osOK, "osKernelInitialize");
 
     // Single-writer CBOR queue (transport -> PLC)
-    CHECK_OK(CborMsg_InitQueue(16u), "CborMsg_InitQueue");
+    CHECK_OK(PlcMsg_Init(8), "PlcMsg_Init");
 
     const osThreadAttr_t plcAttr = {
             .name = "PLC",
-            .stack_size = 4096,
+            .stack_size = 8192,
             .priority = osPriorityHigh
     };
 
@@ -497,9 +558,9 @@ void init_rtos(void)
             .priority = osPriorityLow
     };
 
-    thPlc   = osThreadNew(TaskPlcScan, NULL, &plcAttr);
+    thPlc = osThreadNew(TaskPlcScan, NULL, &plcAttr);
     CHECK_OK(thPlc != NULL, "Task PLC");
-    hPlc = (TaskHandle_t)thPlc;
+    hPlc = (TaskHandle_t) thPlc;
 
 //    thComms = osThreadNew(TaskComms, NULL, &commsAttr);
 //    CHECK_OK(thComms != NULL, "Task COMMS");
@@ -511,18 +572,15 @@ void init_rtos(void)
 
     thInit = osThreadNew(TaskInitial, NULL, &initAttr);
     CHECK_OK(thInit != NULL, "Task Init");
-    hInit = (TaskHandle_t)thInit;
+    hInit = (TaskHandle_t) thInit;
 
     thDiag = osThreadNew(TaskDiag, NULL, &diagAttr);
     CHECK_OK(thDiag != NULL, "Task Diag");
 
     // ---- AUTO-LOAD saved active graph on boot ----
     // Если нет сохранения - вернет false, это нормально.
-    if (plc_persist_load()) {
-        printf("[PERSIST] auto-load OK\r\n");
-    } else {
-        printf("[PERSIST] auto-load skipped (no saved graph)\r\n");
-    }
+//    plc_persist_clear();
+    g_needLoadActive = true;
 
 
     CHECK_OK(osKernelStart() == osOK, "osKernelStart");
@@ -531,8 +589,7 @@ void init_rtos(void)
 }
 
 // -------------------- TX helpers --------------------
-BaseType_t UartTx_Send(const void *msg, size_t len, TickType_t to)
-{
+BaseType_t UartTx_Send(const void *msg, size_t len, TickType_t to) {
     if (!s_mb || !msg || len == 0) return pdFALSE;
 
     size_t sent = xMessageBufferSend(s_mb, msg, len, to);

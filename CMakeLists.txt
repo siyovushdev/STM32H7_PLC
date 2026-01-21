@@ -19,14 +19,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 
 #Uncomment for hardware floating point
-add_compile_definitions(ARM_MATH_CM4;ARM_MATH_MATRIX_CHECK;ARM_MATH_ROUNDING)
-add_compile_options(-mfloat-abi=hard -mfpu=fpv5-sp-d16)
-add_link_options(-mfloat-abi=hard -mfpu=fpv5-sp-d16)
+# Hardware FPU (STM32H743 = Cortex-M7, FPv5-D16)
+add_compile_definitions(ARM_MATH_CM7 ARM_MATH_MATRIX_CHECK ARM_MATH_ROUNDING)
+add_compile_options(-mfloat-abi=hard -mfpu=fpv5-d16)
+add_link_options(-mfloat-abi=hard -mfpu=fpv5-d16)
 
 #Uncomment for software floating point
 #add_compile_options(-mfloat-abi=soft)
 
-add_compile_options(-mcpu=cortex-m7 -mthumb -mthumb-interwork)
+add_compile_options(-mcpu=cortex-m7 -mthumb )
 add_compile_options(-ffunction-sections -fdata-sections -fno-common -fmessage-length=0)
 
 # uncomment to mitigate c++17 absolute addresses warnings
@@ -95,7 +96,7 @@ file(GLOB_RECURSE SOURCES
 set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32H743VITX_FLASH.ld)
 
 add_link_options(-Wl,-gc-sections,--print-memory-usage,-Map=${PROJECT_BINARY_DIR}/${PROJECT_NAME}.map)
-add_link_options(-mcpu=cortex-m7 -mthumb -mthumb-interwork)
+add_link_options(-mcpu=cortex-m7 -mthumb )
 add_link_options(-T ${LINKER_SCRIPT})
 
 add_executable(${PROJECT_NAME}.elf ${SOURCES} ${LINKER_SCRIPT})

@@ -194,27 +194,36 @@ static bool process_frames(struct netconn *c, Ring *q)
         // read payload into static buffer
         ring_read(q, s_payload_buf, plen);
         // CBOR handler (single-writer via PLC task queue)
-        CborReply reply;
-        reply.len = 0;
+        PlcCmd cmd;
+        PlcReply rep;
+        CborReply outBytes;
+        memset(&outBytes, 0, sizeof(outBytes));
 
-        bool okRpc = CborMsg_RpcCall(s_payload_buf, (size_t)plen, &reply, PLC_TCP_RECV_TIMEOUT_MS);
-        if (!okRpc) {
-            // Если PLC task не ответил (очередь/таймаут), просто не отправляем ответ.
-            // Клиент сам решит, что делать (retry / reconnect).
-            LOGT(TAG, "RPC failed (queue/timeout)");
+        if (!CborProto_DecodeCmd(s_payload_buf, (size_t)plen, &cmd)) {
+            proto_count_rx_parse_err();
+            continue;
         }
-        // reply
-        if (reply.len > 0) {
-            if (reply.len > PLC_TCP_MAX_PAYLOAD) {
-                LOGT(TAG, "reply too big: %u", (unsigned)reply.len);
+        proto_count_rx_frame_ok();
+
+        if (!PlcMsg_RpcCallCmd(&cmd, &rep, PLC_TCP_RECV_TIMEOUT_MS)) {
+            LOGT(TAG, "PLC RPC timeout/queue full");
+            continue;
+        }
+
+        if (!CborProto_EncodeReply(&rep, &outBytes)) {
+            LOGT(TAG, "encode reply failed");
+            continue;
+        }
+
+        if (outBytes.len > 0) {
+            if (outBytes.len > PLC_TCP_MAX_PAYLOAD) {
+                LOGT(TAG, "reply too big: %u", (unsigned)outBytes.len);
                 continue;
             }
-            err_t se = send_frame(c, reply.data, (uint16_t)reply.len);
-            if (se != ERR_OK) {
-                LOGT(TAG, "send_frame err=%d", (int)se);
-                return false;
-            }
+            err_t se = send_frame(c, outBytes.data, (uint16_t)outBytes.len);
+            if (se != ERR_OK) return false;
         }
+
     }
     return true;
 }
@@ -356,7 +365,7 @@ bool PlcCommTcp_Start(uint16_t port)
     BaseType_t ok = xTaskCreate(
             tcp_server_task,
             "PlcTcpSrv",
-            4096,
+            8096,
             (void*)(uintptr_t)port,
             tskIDLE_PRIORITY + 2,
             &s_task

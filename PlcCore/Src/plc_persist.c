@@ -8,6 +8,7 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stddef.h>   // offsetof
 
 #define TAG "PERSIST"
 
@@ -104,13 +105,22 @@ static HAL_StatusTypeDef flash_erase_sector(uint32_t addr) {
     return st;
 }
 
-static HAL_StatusTypeDef flash_write_aligned(uint32_t addr, const void *data, uint32_t len) {
+// Пишем потоково по 32 байта (FLASHWORD), без огромных буферов.
+static HAL_StatusTypeDef flash_write_stream(uint32_t addr, const PlcPersistHeader *h, const void *data, uint32_t len) {
     if ((addr % FLASHWORD_SIZE) != 0u) {
         LOGT(TAG, "Write FAIL: addr not 32B aligned: 0x%08lX", (unsigned long) addr);
         return HAL_ERROR;
     }
-    if ((len % FLASHWORD_SIZE) != 0u) {
-        LOGT(TAG, "Write FAIL: len not multiple of 32: %lu", (unsigned long) len);
+
+    const uint8_t *hdr = (const uint8_t *)h;
+    const uint8_t *payload = (const uint8_t *)data;
+
+    const uint32_t total = (uint32_t)sizeof(PlcPersistHeader) + len;
+    const uint32_t padded = (total + (FLASHWORD_SIZE - 1u)) & ~(FLASHWORD_SIZE - 1u);
+
+    if (padded > PLC_PERSIST_SIZE) {
+        LOGT(TAG, "Write FAIL: padded=%lu > sector=%lu",
+             (unsigned long)padded, (unsigned long)PLC_PERSIST_SIZE);
         return HAL_ERROR;
     }
 
@@ -119,17 +129,30 @@ static HAL_StatusTypeDef flash_write_aligned(uint32_t addr, const void *data, ui
     HAL_FLASH_Unlock();
     clear_flash_flags(bank);
 
-    const uint8_t *p = (const uint8_t *) data;
     HAL_StatusTypeDef st = HAL_OK;
 
-    for (uint32_t off = 0; off < len; off += FLASHWORD_SIZE) {
-        // Данные для FLASHWORD должны быть в RAM, безопаснее выровнять на 32
-        uint32_t fw[8] __attribute__((aligned(32)));
-        memcpy(fw, p + off, FLASHWORD_SIZE);
+    for (uint32_t off = 0; off < padded; off += FLASHWORD_SIZE) {
+        uint8_t block[FLASHWORD_SIZE] __attribute__((aligned(32)));
+        memset(block, 0xFF, sizeof(block));
 
-        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD, addr + off, (uint32_t) fw);
+        for (uint32_t j = 0; j < FLASHWORD_SIZE; j++) {
+            uint32_t idx = off + j;
+
+            if (idx < (uint32_t)sizeof(PlcPersistHeader)) {
+                block[j] = hdr[idx];
+            } else if (idx < total) {
+                block[j] = payload[idx - (uint32_t)sizeof(PlcPersistHeader)];
+            } else {
+                // padding stays 0xFF
+            }
+        }
+
+        uint32_t fw[8] __attribute__((aligned(32)));
+        memcpy(fw, block, FLASHWORD_SIZE);
+
+        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD, addr + off, (uint32_t)fw);
         if (st != HAL_OK) {
-            LOGT(TAG, "Program FAIL: addr=0x%08lX off=%lu", (unsigned long) (addr + off), (unsigned long) off);
+            LOGT(TAG, "Program FAIL: addr=0x%08lX off=%lu", (unsigned long)(addr + off), (unsigned long)off);
             log_flash_error();
             break;
         }
@@ -137,9 +160,9 @@ static HAL_StatusTypeDef flash_write_aligned(uint32_t addr, const void *data, ui
 
     HAL_FLASH_Lock();
 
-    // Чтобы не читать старые данные из DCache
 #if (__DCACHE_PRESENT == 1U)
-    SCB_InvalidateDCache_by_Addr((uint32_t *) addr, (int32_t) len);
+    // invalidate cache lines covering written flash range
+    SCB_InvalidateDCache_by_Addr((uint32_t *)addr, (int32_t)padded);
 #endif
     __DSB();
     __ISB();
@@ -151,25 +174,25 @@ static HAL_StatusTypeDef flash_write_aligned(uint32_t addr, const void *data, ui
 // Low-level blob API
 // =====================
 static inline const uint8_t *flash_ptr(uint32_t addr) {
-    return (const uint8_t *) (uintptr_t) addr;
+    return (const uint8_t *)(uintptr_t)addr;
 }
 
 bool plc_persist_load_blob(void *out_buf, uint32_t out_max, uint32_t *out_len) {
     if (!out_buf || out_max == 0u) return false;
 
-    const PlcPersistHeader *h = (const PlcPersistHeader *) flash_ptr(PLC_PERSIST_BASE);
+    const PlcPersistHeader *h = (const PlcPersistHeader *)flash_ptr(PLC_PERSIST_BASE);
 
     if (h->magic != PLC_PERSIST_MAGIC) {
-        LOGT(TAG, "No persist: bad magic 0x%08lX", (unsigned long) h->magic);
+        LOGT(TAG, "No persist: bad magic 0x%08lX", (unsigned long)h->magic);
         return false;
     }
     if (h->version != PLC_PERSIST_VERSION) {
         LOGT(TAG, "No persist: version %lu != %lu",
-             (unsigned long) h->version, (unsigned long) PLC_PERSIST_VERSION);
+             (unsigned long)h->version, (unsigned long)PLC_PERSIST_VERSION);
         return false;
     }
     if (h->data_len == 0u || h->data_len > PLC_PERSIST_MAX_DATA || h->data_len > out_max) {
-        LOGT(TAG, "No persist: bad len=%lu", (unsigned long) h->data_len);
+        LOGT(TAG, "No persist: bad len=%lu", (unsigned long)h->data_len);
         return false;
     }
 
@@ -177,20 +200,20 @@ bool plc_persist_load_blob(void *out_buf, uint32_t out_max, uint32_t *out_len) {
     uint32_t crc = crc32_simple(data, h->data_len);
     if (h->crc32 != 0u && crc != h->crc32) {
         LOGT(TAG, "No persist: CRC mismatch calc=0x%08lX stored=0x%08lX",
-             (unsigned long) crc, (unsigned long) h->crc32);
+             (unsigned long)crc, (unsigned long)h->crc32);
         return false;
     }
 
     memcpy(out_buf, data, h->data_len);
     if (out_len) *out_len = h->data_len;
 
-    LOGT(TAG, "Persist blob loaded: len=%lu", (unsigned long) h->data_len);
+    LOGT(TAG, "Persist blob loaded: len=%lu", (unsigned long)h->data_len);
     return true;
 }
 
 bool plc_persist_save_blob(const void *data, uint32_t len) {
     if (!data || len == 0u || len > PLC_PERSIST_MAX_DATA) {
-        LOGT(TAG, "Persist blob save: bad args len=%lu", (unsigned long) len);
+        LOGT(TAG, "Persist blob save: bad args len=%lu", (unsigned long)len);
         return false;
     }
 
@@ -201,30 +224,26 @@ bool plc_persist_save_blob(const void *data, uint32_t len) {
     h.data_len = len;
     h.crc32 = crc32_simple(data, len);
 
-    uint32_t total = (uint32_t) sizeof(PlcPersistHeader) + len;
-    uint32_t padded = (total + (FLASHWORD_SIZE - 1u)) & ~(FLASHWORD_SIZE - 1u);
+    const uint32_t total = (uint32_t)sizeof(PlcPersistHeader) + len;
+    const uint32_t padded = (total + (FLASHWORD_SIZE - 1u)) & ~(FLASHWORD_SIZE - 1u);
 
     if (padded > PLC_PERSIST_SIZE) {
         LOGT(TAG, "Persist blob save: too big padded=%lu > sector=%lu",
-             (unsigned long) padded, (unsigned long) PLC_PERSIST_SIZE);
+             (unsigned long)padded, (unsigned long)PLC_PERSIST_SIZE);
         return false;
     }
-
-    static uint8_t s_buf[PLC_PERSIST_SIZE] __attribute__((section(".dtcm_bss"), aligned(32)));
-    memset(s_buf, 0xFF, padded);
-    memcpy(s_buf, &h, sizeof(h));
-    memcpy(s_buf + sizeof(h), data, len);
 
     if (flash_erase_sector(PLC_PERSIST_BASE) != HAL_OK) {
         LOGT(TAG, "Persist blob save: erase failed");
         return false;
     }
-    if (flash_write_aligned(PLC_PERSIST_BASE, s_buf, padded) != HAL_OK) {
+
+    if (flash_write_stream(PLC_PERSIST_BASE, &h, data, len) != HAL_OK) {
         LOGT(TAG, "Persist blob save: program failed");
         return false;
     }
 
-    LOGT(TAG, "Persist blob saved: len=%lu padded=%lu", (unsigned long) len, (unsigned long) padded);
+    LOGT(TAG, "Persist blob saved: len=%lu padded=%lu", (unsigned long)len, (unsigned long)padded);
     return true;
 }
 
@@ -233,7 +252,7 @@ bool plc_persist_clear(void) {
 }
 
 // =====================
-// High-level: SAVE/LOAD ACTIVE GRAPH (как ожидает cbor_msg.c)
+// High-level: SAVE/LOAD ACTIVE GRAPH
 // =====================
 
 // сохраняем только "статическую" часть узла, без runtime
@@ -256,18 +275,22 @@ typedef struct __attribute__((packed)) {
     PlcNodeStatic nodes[PLC_MAX_NODES];
 } PlcGraphStaticV1;
 
+// Реальный максимум blob под граф (а не 128KB)
+#define PLC_PERSIST_GRAPH_MAX_LEN \
+    ((uint32_t)offsetof(PlcGraphStaticV1, nodes) + (uint32_t)(PLC_MAX_NODES) * (uint32_t)sizeof(PlcNodeStatic))
+
 bool plc_persist_save(void) {
     if (!g_activeGraphValid) {
         LOGT(TAG, "save_active: no active graph");
         return false;
     }
     if (g_activeGraph.nodeCount == 0u || g_activeGraph.nodeCount > PLC_MAX_NODES) {
-        LOGT(TAG, "save_active: bad nodeCount=%u", (unsigned) g_activeGraph.nodeCount);
+        LOGT(TAG, "save_active: bad nodeCount=%u", (unsigned)g_activeGraph.nodeCount);
         return false;
     }
 
-    PlcGraphStaticV1 st;
-    memset(&st, 0, sizeof(st));
+    static PlcGraphStaticV1 st;
+    memset(&st, 0, offsetof(PlcGraphStaticV1, nodes) + st.nodeCount * sizeof(PlcNodeStatic));
     st.cycleMs = g_activeGraph.cycleMs;
     st.nodeCount = g_activeGraph.nodeCount;
 
@@ -286,12 +309,13 @@ bool plc_persist_save(void) {
         s->flags = n->flags;
     }
 
-    uint32_t blobLen = (uint32_t) (offsetof(PlcGraphStaticV1, nodes) + st.nodeCount * sizeof(PlcNodeStatic));
+    uint32_t blobLen = (uint32_t)(offsetof(PlcGraphStaticV1, nodes) + st.nodeCount * sizeof(PlcNodeStatic));
     return plc_persist_save_blob(&st, blobLen);
 }
 
 bool plc_persist_load(void) {
-    uint8_t buf[PLC_PERSIST_MAX_DATA];
+    // НЕ stack, иначе HardFault. Буфер ровно под максимально возможный граф.
+    static uint8_t buf[PLC_PERSIST_GRAPH_MAX_LEN] __attribute__((aligned(32)));
     uint32_t len = 0;
 
     if (!plc_persist_load_blob(buf, sizeof(buf), &len)) {
@@ -300,24 +324,25 @@ bool plc_persist_load(void) {
     }
 
     if (len < offsetof(PlcGraphStaticV1, nodes)) {
-        LOGT(TAG, "load_active: blob too small len=%lu", (unsigned long) len);
+        LOGT(TAG, "load_active: blob too small len=%lu", (unsigned long)len);
         return false;
     }
 
-    const PlcGraphStaticV1 *st = (const PlcGraphStaticV1 *) buf;
+    const PlcGraphStaticV1 *st = (const PlcGraphStaticV1 *)buf;
 
     if (st->nodeCount == 0u || st->nodeCount > PLC_MAX_NODES) {
-        LOGT(TAG, "load_active: bad nodeCount=%u", (unsigned) st->nodeCount);
+        LOGT(TAG, "load_active: bad nodeCount=%u", (unsigned)st->nodeCount);
         return false;
     }
 
-    uint32_t needLen = (uint32_t) (offsetof(PlcGraphStaticV1, nodes) + st->nodeCount * sizeof(PlcNodeStatic));
+    uint32_t needLen = (uint32_t)(offsetof(PlcGraphStaticV1, nodes) + st->nodeCount * sizeof(PlcNodeStatic));
     if (len != needLen) {
-        LOGT(TAG, "load_active: len mismatch got=%lu need=%lu", (unsigned long) len, (unsigned long) needLen);
+        LOGT(TAG, "load_active: len mismatch got=%lu need=%lu",
+             (unsigned long)len, (unsigned long)needLen);
         return false;
     }
 
-    PlcGraph g;
+    static PlcGraph g;     // <-- было на стеке
     memset(&g, 0, sizeof(g));
     g.cycleMs = st->cycleMs;
     g.nodeCount = st->nodeCount;
@@ -335,7 +360,7 @@ bool plc_persist_load(void) {
         n->paramFloat = s->paramFloat;
         n->paramMs = s->paramMs;
         n->flags = s->flags;
-        // runtime поля остаются 0 -> корректный старт
+        // runtime поля = 0 -> корректный старт
     }
 
     if (!plc_upload_graph(&g)) {
@@ -348,6 +373,6 @@ bool plc_persist_load(void) {
     }
 
     LOGT(TAG, "load_active: OK (nodes=%u cycleMs=%lu)",
-         (unsigned) g.nodeCount, (unsigned long) g.cycleMs);
+         (unsigned)g.nodeCount, (unsigned long)g.cycleMs);
     return true;
 }

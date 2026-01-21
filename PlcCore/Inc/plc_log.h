@@ -35,3 +35,5 @@ void plc_log_init(void);
 void plc_log_put(PlcEventCode code, int16_t a, int16_t b);
 void plc_log_dump_cbor(/*CborEncoder*/ void* root_map); // вызов из send_status_reply() или из отдельной команды
 uint16_t plc_log_count(void);
+
+const PlcLogEntry* plc_log_get_by_index(uint16_t idx);

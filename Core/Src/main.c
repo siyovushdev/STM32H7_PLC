@@ -115,6 +115,22 @@ void ModbusTCPTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void log_reset_reason(void)
+{
+  uint32_t csr = RCC->RSR; // H7: Reset Status Register
+  LOGT("RST", "RCC->RSR=0x%08lX", (unsigned long)csr);
+
+  if (csr & RCC_RSR_IWDG1RSTF) LOGT("RST", "IWDG1 reset");
+//  if (csr & RCC_RSR_IWDG2RSTF) LOGT("RST", "IWDG2 reset");
+  if (csr & RCC_RSR_WWDG1RSTF) LOGT("RST", "WWDG reset");
+  if (csr & RCC_RSR_SFTRSTF)   LOGT("RST", "Software reset");
+  if (csr & RCC_RSR_BORRSTF)   LOGT("RST", "BOR reset");
+  if (csr & RCC_RSR_PORRSTF)   LOGT("RST", "POR/PDR reset");
+  if (csr & RCC_RSR_PINRSTF)   LOGT("RST", "NRST pin reset");
+  if (csr & RCC_RSR_LPWRRSTF)  LOGT("RST", "Low-power reset");
+
+  __HAL_RCC_CLEAR_RESET_FLAGS();
+}
 
 /* USER CODE END 0 */
 
@@ -219,7 +235,7 @@ int main(void)
 //
   u3_start();
 
-
+  log_reset_reason();
 
   init_rtos();
   /* Init scheduler */
@@ -474,14 +490,14 @@ static void MX_IWDG1_Init(void)
   /* USER CODE BEGIN IWDG1_Init 1 */
 
   /* USER CODE END IWDG1_Init 1 */
-  hiwdg1.Instance = IWDG1;
-  hiwdg1.Init.Prescaler = IWDG_PRESCALER_64;
-  hiwdg1.Init.Window = 4095;
-  hiwdg1.Init.Reload = 4095;
-  if (HAL_IWDG_Init(&hiwdg1) != HAL_OK)
-  {
-    Error_Handler();
-  }
+//  hiwdg1.Instance = IWDG1;
+//  hiwdg1.Init.Prescaler = IWDG_PRESCALER_64;
+//  hiwdg1.Init.Window = 4095;
+//  hiwdg1.Init.Reload = 4095;
+//  if (HAL_IWDG_Init(&hiwdg1) != HAL_OK)
+//  {
+//    Error_Handler();
+//  }
   /* USER CODE BEGIN IWDG1_Init 2 */
 
   /* USER CODE END IWDG1_Init 2 */

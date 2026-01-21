@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32h7xx_it.h"
+#include "usb_log.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -85,42 +86,34 @@ void NMI_Handler(void)
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
-/**
-  * @brief This function handles Hard fault interrupt.
-  */
-static volatile uint32_t hf_pc, hf_lr, hf_cfsr, hf_hfsr, hf_dfsr, hf_afsr, hf_bfar, hf_mmfar;
+
+volatile uint32_t hf_pc, hf_lr, hf_psr, hf_cfsr, hf_hfsr, hf_bfar, hf_mmfar;
+
+__attribute__((used, noinline)) void fault_capture(uint32_t *sp)
+{
+    hf_lr   = sp[5];
+    hf_pc   = sp[6];
+    hf_psr  = sp[7];
+
+    hf_cfsr = SCB->CFSR;
+    hf_hfsr = SCB->HFSR;
+    hf_bfar = SCB->BFAR;
+    hf_mmfar= SCB->MMFAR;
+
+    __asm volatile("bkpt 0");
+    while(1){ __asm volatile("nop"); }
+}
 
 __attribute__((naked)) void HardFault_Handler(void)
 {
     __asm volatile(
-            "tst lr, #4       \n"
-            "ite eq           \n"
-            "mrseq r0, msp    \n"
-            "mrsne r0, psp    \n"
-            "b hardfault_c    \n"
+            "tst lr, #4        \n"
+            "ite eq            \n"
+            "mrseq r0, msp     \n"
+            "mrsne r0, psp     \n"
+            "b fault_capture   \n"
             );
 }
-
-void hardfault_c(uint32_t *sp)
-{
-    hf_lr   = sp[5];
-    hf_pc   = sp[6];
-
-    hf_cfsr  = SCB->CFSR;
-    hf_hfsr  = SCB->HFSR;
-    hf_dfsr  = SCB->DFSR;
-    hf_afsr  = SCB->AFSR;
-    hf_bfar  = SCB->BFAR;
-    hf_mmfar = SCB->MMFAR;
-
-    // ВАЖНО: в HardFault лучше НЕ печатать много.
-    // Если хочешь — одна строка:
-    // printf("HF pc=%08lx lr=%08lx cfsr=%08lx bfar=%08lx mmfar=%08lx\r\n", hf_pc, hf_lr, hf_cfsr, hf_bfar, hf_mmfar);
-
-    while (1) {}
-}
-
-
 /**
   * @brief This function handles Memory management fault.
   */
