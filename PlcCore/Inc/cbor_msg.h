@@ -61,8 +61,16 @@ typedef struct {
                 float   f[PLC_MEM_REAL_COUNT];
             } v;
         } memWrite;
+
+        // ✅ ДОБАВИТЬ
+        struct {
+            uint16_t from;   // индекс в логе: 0..total-1 (старое->новое)
+            uint16_t count;  // сколько записей вернуть (будет ограничено PLC_LOG_DUMP_MAX)
+        } logDump;
+
     } u;
 } PlcCmd;
+
 
 // ----- status snapshot -----
 typedef struct {
@@ -113,9 +121,12 @@ typedef struct {
 } PlcLogItemSnapshot;
 
 typedef struct {
-    uint16_t count;
+    uint16_t total;   // всего записей в логе сейчас (<= PLC_LOG_CAP)
+    uint16_t from;    // с какого индекса реально отдали
+    uint16_t count;   // сколько отдали
     PlcLogItemSnapshot items[PLC_LOG_DUMP_MAX];
 } PlcLogDumpSnapshot;
+
 
 // ----- mem replies -----
 typedef struct {

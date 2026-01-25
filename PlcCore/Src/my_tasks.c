@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include "plc_persist.h"
+#include "plc_log.h"
 
 
 // ===== UART RX/TX plumbing =====
@@ -265,9 +266,22 @@ static inline uint32_t dwt_diff(uint32_t a, uint32_t b) {
     return (uint32_t) (b - a); // uint wrap ok
 }
 
+uint32_t lastOverrunLogMs = 0u;
+uint32_t lastLongLogMs = 0u;
+
+static inline int16_t clamp_u32_i16(uint32_t v) {
+    return (v > 32767u) ? 32767 : (int16_t)v;
+}
 
 void TaskPlcScan(void *arg) {
     (void) arg;
+    plc_log_init();
+
+    osDelay(10000);
+    plc_log_put(PLC_EVT_LOG_VALUE, 100, (int16_t)(now_ms() & 0x7FFF));
+    plc_log_put(PLC_EVT_LOG_VALUE, 101, (int16_t)(HAL_GetTick() & 0x7FFF));
+    plc_log_put(PLC_EVT_LOG_VALUE, 102, (int16_t)(xTaskGetTickCount() & 0x7FFF));
+
 
     plc_mem_init();
 
@@ -364,7 +378,7 @@ void TaskPlcScan(void *arg) {
             // Реальная загрузка + подготовка staging + запрос активации
             // (plc_persist_load внутри уже делает upload->staging + plc_request_activate_graph)
             bool ok = plc_persist_load();
-
+            plc_log_put(ok ? PLC_EVT_PERSIST_LOAD_OK : PLC_EVT_PERSIST_LOAD_FAIL, 0, 0);
             #if PLC_LOG_ENABLED
                         LOGT("PERSIST", "deferred load_active: %s", ok ? "OK" : "FAIL");
             #endif
@@ -383,6 +397,17 @@ void TaskPlcScan(void *arg) {
 
         plc_metrics_on_cycle_us(tickUs, periodMs);
 
+        // long tick (>=80% периода), тоже rate-limit 1/сек
+        if (periodUs > 0u && tickUs >= (periodUs * 8u / 10u)) {
+            if ((cycleStartMs - lastLongLogMs) >= 1000u) {
+                lastLongLogMs = cycleStartMs;
+                plc_log_put(PLC_EVT_SCAN_LONG,
+                            clamp_u32_i16(tickUs),
+                            (int16_t)periodMs);
+            }
+        }
+
+
         // =====================================================================
         // WINDOW APPLY (до дедлайна)
         // =====================================================================
@@ -397,8 +422,17 @@ void TaskPlcScan(void *arg) {
 
             if (leftTicks <= 0) {
                 s_prof.overruns++;
+
+                // rate-limit: не чаще 1 раза/сек
+                if ((cycleStartMs - lastOverrunLogMs) >= 1000u) {
+                    lastOverrunLogMs = cycleStartMs;
+                    plc_log_put(PLC_EVT_SCAN_OVERRUN,
+                                clamp_u32_i16(tickUs),        // a = scanUs (lo/clamped)
+                                (int16_t)periodMs);           // b = cycleMs
+                }
                 break;
             }
+
 
             // leftUs = leftTicks * 1_000_000 / tickHz
             uint32_t leftUs = (uint32_t) ((uint64_t) (uint32_t) leftTicks * 1000000ull / (uint64_t) tickHz);

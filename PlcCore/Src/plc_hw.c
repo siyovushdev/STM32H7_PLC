@@ -141,8 +141,15 @@ static inline void timer_set_ccr(TIM_HandleTypeDef* htim, uint32_t channel, uint
 
 uint32_t now_ms(void)
 {
-    return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    // 1) если RTOS запущена — берём её tick
+    if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING) {
+        return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    }
+
+    // 2) иначе HAL (uptime)
+    return HAL_GetTick();
 }
+
 
 void iwdg_feed(void)
 {

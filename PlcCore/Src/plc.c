@@ -678,6 +678,7 @@ bool plc_upload_graph(const PlcGraph *src) {
 
 bool plc_request_activate_graph(void) {
     if (!g_stagingGraphValid) {
+        plc_log_put(PLC_EVT_ACTIVATE_FAIL, 1, 0); // 1=staging invalid
 #if PLC_LOG_ENABLED && PLC_LOG_ACTIVATE
         LOGT(PLC_LOG_TAG, "activate: staging invalid -> reject");
 #endif
@@ -688,7 +689,7 @@ bool plc_request_activate_graph(void) {
     LOGT(PLC_LOG_TAG, "activate: requested (will swap on next tick)");
 #endif
 
-    plc_log_put(PLC_EVT_ACTIVATE_OK, (int16_t)g_stagingGraph.nodeCount, (int16_t)g_stagingGraph.cycleMs);
+//    plc_log_put(PLC_EVT_ACTIVATE_OK, (int16_t)g_stagingGraph.nodeCount, (int16_t)g_stagingGraph.cycleMs);
     return true;
 }
 
@@ -901,6 +902,9 @@ void plc_tick(uint32_t nowMs)
             plc_graph_reset_runtime(&g_activeGraph);
             memset(di_filter, 0, sizeof(di_filter));
 
+        plc_log_put(PLC_EVT_ACTIVATE_OK,
+                    (int16_t)g_activeGraph.nodeCount,
+                    (int16_t)g_activeGraph.cycleMs);
 
         if (PLC_RESET_MEM_ON_ACTIVATE) {
             memset(s_memBool, 0, sizeof(s_memBool));

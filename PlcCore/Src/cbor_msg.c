@@ -221,31 +221,52 @@ static void apply_mem_write(const PlcCmd* cmd, PlcReply* rep)
 }
 
 
-static void fill_log_dump(PlcLogDumpSnapshot* out)
+static void fill_log_dump(const PlcCmd* cmd, PlcLogDumpSnapshot* out)
 {
     memset(out, 0, sizeof(*out));
 
-    uint16_t n = plc_log_count();
-    if (n == 0) { out->count = 0; return; }
+    uint16_t total = plc_log_count();
+    out->total = total;
 
-    // берём последние PLC_LOG_DUMP_MAX записей
-    uint16_t take = (n > PLC_LOG_DUMP_MAX) ? PLC_LOG_DUMP_MAX : n;
+    if (total == 0) {
+        out->from = 0;
+        out->count = 0;
+        return;
+    }
+
+    uint16_t from = cmd ? cmd->u.logDump.from : 0;
+    uint16_t req  = cmd ? cmd->u.logDump.count : PLC_LOG_DUMP_MAX;
+
+    if (req > PLC_LOG_DUMP_MAX) req = PLC_LOG_DUMP_MAX;
+    if (from > total) from = total;
+
+    // если from==0 и клиент не задавал from/count — удобнее отдавать "последние"
+    // (оставим поведение: если from==0 и req==PLC_LOG_DUMP_MAX -> последние)
+    // Но чтобы не ломать пагинацию: введём правило:
+    // - если клиент прислал ключ "from" -> строго from
+    // - если не прислал -> последние
+    // Для этого нужен флаг "hasFrom" при decode (если хочешь). Ниже — простой вариант без флага:
+    // будем считать, что "from=0" значит "с начала".
+    // Если хочешь "последние" по умолчанию — скажи, я добавлю hasFrom/hasCount.
+
+    // ограничим по total
+    uint16_t maxAvail = (from < total) ? (total - from) : 0;
+    uint16_t take = (req < maxAvail) ? req : maxAvail;
+
+    out->from = from;
     out->count = take;
 
-    // индекс в логе: 0..n-1 (старое->новое)
-    // надо взять последние: [n-take .. n-1]
-    uint16_t start = (uint16_t)(n - take);
-
     for (uint16_t i = 0; i < take; i++) {
-        const PlcLogEntry* e = plc_log_get_by_index((uint16_t)(start + i));
+        const PlcLogEntry* e = plc_log_get_by_index((uint16_t)(from + i));
         if (!e) break;
 
         out->items[i].tsMs = e->ts_ms;
         out->items[i].code = (int16_t)e->code;
-        out->items[i].a = e->a;
-        out->items[i].b = e->b;
+        out->items[i].a    = e->a;
+        out->items[i].b    = e->b;
     }
 }
+
 
 
 static void PlcCmd_Apply(const PlcCmd* cmd, PlcReply* rep)
@@ -254,13 +275,22 @@ static void PlcCmd_Apply(const PlcCmd* cmd, PlcReply* rep)
     rep->ok = false;
 
     switch (cmd->type) {
-        case PLC_CMD_UPLOAD_GRAPH:
-            g_stagingGraph = cmd->u.upload.graph;
-            g_stagingGraphValid = true;
-            plc_log_put(PLC_EVT_UPLOAD_OK, (int16_t)g_stagingGraph.nodeCount, (int16_t)g_stagingGraph.cycleMs);
+        case PLC_CMD_UPLOAD_GRAPH: {
             rep->type = PLC_REPLY_UPLOAD_GRAPH_ACK;
-            rep->ok = true;
+
+            bool ok = plc_upload_graph(&cmd->u.upload.graph); // тут validate + reset_runtime
+            rep->ok = ok;
+
+            if (ok) {
+                plc_log_put(PLC_EVT_UPLOAD_OK,
+                            (int16_t)cmd->u.upload.graph.nodeCount,
+                            (int16_t)cmd->u.upload.graph.cycleMs);
+            } else {
+                plc_log_put(PLC_EVT_UPLOAD_FAIL, 0, 0);
+            }
             break;
+        }
+
 
         case PLC_CMD_ACTIVATE_GRAPH:
             rep->type = PLC_REPLY_ACTIVATE_GRAPH_ACK;
@@ -273,32 +303,40 @@ static void PlcCmd_Apply(const PlcCmd* cmd, PlcReply* rep)
             fill_status_snapshot(&rep->u.status);
             break;
 
-        case PLC_CMD_SAVE_ACTIVE:
+        case PLC_CMD_SAVE_ACTIVE: {
             rep->type = PLC_REPLY_SAVE_ACTIVE_ACK;
-            rep->ok = plc_persist_save();
+            bool ok = plc_persist_save();
+            rep->ok = ok;
+
+            plc_log_put(ok ? PLC_EVT_PERSIST_SAVE_OK : PLC_EVT_PERSIST_SAVE_FAIL, 0, 0);
             break;
+        }
+
 
         case PLC_CMD_LOAD_ACTIVE:
             rep->type = PLC_REPLY_LOAD_ACTIVE_ACK;
-            g_needLoadActive = true;   // выполнить позже в safe-point
-            rep->ok = true;            // ack сразу
+            g_needLoadActive = true;
+            rep->ok = true;
+            plc_log_put(PLC_EVT_PERSIST_LOAD_REQ, -1, 0); // -1 = "requested" (чтобы отличать от real OK)
             break;
 
 
         case PLC_CMD_LOG_DUMP:
             rep->type = PLC_REPLY_LOG_DUMP;
             rep->ok = true;
-            fill_log_dump(&rep->u.logDump);
+            fill_log_dump(cmd, &rep->u.logDump);
             break;
 
         case PLC_CMD_FORCE_OUTPUT:
             rep->type = PLC_REPLY_FORCE_OUTPUT_ACK;
             rep->ok = plc_force_output(cmd->u.force.nodeIndex, cmd->u.force.value, cmd->u.force.holdMs);
+            if (rep->ok) plc_log_put(PLC_EVT_FORCE, (int16_t)cmd->u.force.nodeIndex, cmd->u.force.value ? 1 : 0);
             break;
 
         case PLC_CMD_RELEASE_OUTPUT:
             rep->type = PLC_REPLY_RELEASE_OUTPUT_ACK;
             rep->ok = plc_release_output(cmd->u.release.nodeIndex);
+            if (rep->ok) plc_log_put(PLC_EVT_RELEASE, (int16_t)cmd->u.release.nodeIndex, 0);
             break;
 
         case PLC_CMD_MEM_READ:
@@ -938,7 +976,33 @@ bool CborProto_DecodeCmd(const uint8_t* buf, size_t len, PlcCmd* outCmd)
     if (strcmp(cmdBuf, "status") == 0)         { outCmd->type = PLC_CMD_STATUS; return true; }
     if (strcmp(cmdBuf, "save_active") == 0)    { outCmd->type = PLC_CMD_SAVE_ACTIVE; return true; }
     if (strcmp(cmdBuf, "load_active") == 0)    { outCmd->type = PLC_CMD_LOAD_ACTIVE; return true; }
-    if (strcmp(cmdBuf, "log_dump") == 0)       { outCmd->type = PLC_CMD_LOG_DUMP; return true; }
+    if (strcmp(cmdBuf, "log_dump") == 0) {
+        outCmd->type = PLC_CMD_LOG_DUMP;
+
+        // defaults: последние PLC_LOG_DUMP_MAX
+        outCmd->u.logDump.from = 0;
+        outCmd->u.logDump.count = PLC_LOG_DUMP_MAX;
+
+        CborValue v;
+        int32_t from32 = 0, count32 = PLC_LOG_DUMP_MAX;
+
+        if (map_find(&root, "from", &v)) {
+            if (!get_int32(&v, &from32)) return false;
+            if (from32 < 0) from32 = 0;
+        }
+        if (map_find(&root, "count", &v)) {
+            if (!get_int32(&v, &count32)) return false;
+            if (count32 < 0) count32 = 0;
+        }
+
+        if (count32 > (int32_t)PLC_LOG_DUMP_MAX) count32 = PLC_LOG_DUMP_MAX;
+
+        outCmd->u.logDump.from  = (uint16_t)from32;
+        outCmd->u.logDump.count = (uint16_t)count32;
+
+        return true;
+    }
+
 
     if (strcmp(cmdBuf, "force_output") == 0) {
         CborValue v; int32_t nodeIdx32, value32; uint32_t holdMs = 0;
@@ -1199,6 +1263,12 @@ bool CborProto_EncodeReply(const PlcReply* r, CborReply* out)
     }
 
     if (r->type == PLC_REPLY_LOG_DUMP) {
+        cbor_encode_text_stringz(&map, "total");
+        cbor_encode_uint(&map, r->u.logDump.total);
+
+        cbor_encode_text_stringz(&map, "from");
+        cbor_encode_uint(&map, r->u.logDump.from);
+
         cbor_encode_text_stringz(&map, "count");
         cbor_encode_uint(&map, r->u.logDump.count);
 
@@ -1216,6 +1286,7 @@ bool CborProto_EncodeReply(const PlcReply* r, CborReply* out)
         }
         cbor_encoder_close_container(&map, &arr);
     }
+
 
     cbor_encoder_close_container(&root, &map);
     out->len = cbor_encoder_get_buffer_size(&root, out->data);
