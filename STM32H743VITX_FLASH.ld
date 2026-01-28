@@ -43,11 +43,17 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Specify the memory areas */
 MEMORY
 {
-  FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 1920K   /* 2048K - 128K */
-  PERSIST (rx)   : ORIGIN = 0x081E0000, LENGTH = 128K    /* reserved for PLC persist */
+  FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 1920K
+  PERSIST (rx)   : ORIGIN = 0x081E0000, LENGTH = 128K
+
   DTCMRAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 128K
   RAM_D1 (xrw)   : ORIGIN = 0x24000000, LENGTH = 512K
-  RAM_D2 (xrw)   : ORIGIN = 0x30000000, LENGTH = 288K
+
+  /* D2 split: [0x30000000..0x3003FFFF] + [0x30048000..0x30047FFF?]  */
+  RAM_D2A (xrw)  : ORIGIN = 0x30000000, LENGTH = 256K   /* 0x30000000..0x3003FFFF */
+  ETHRAM  (xrw)  : ORIGIN = 0x30040000, LENGTH = 32K    /* 0x30040000..0x30047FFF */
+
+
   RAM_D3 (xrw)   : ORIGIN = 0x38000000, LENGTH = 64K
   ITCMRAM (xrw)  : ORIGIN = 0x00000000, LENGTH = 64K
 }
@@ -55,7 +61,12 @@ MEMORY
 /* Define output sections */
 SECTIONS
 {
-
+.noinit (NOLOAD) :
+{
+  . = ALIGN(4);
+  *(.noinit)
+  . = ALIGN(4);
+} >RAM_D1
     .d3_bss (NOLOAD) :
     {
       . = ALIGN(32);
@@ -79,25 +90,34 @@ SECTIONS
       . = ALIGN(32);
     } >PERSIST
 
-    .dma_buf (NOLOAD) :
-    {
-      . = ALIGN(32);
-      *(.dma_buf)
-      *(.dma_buf*)
-      . = ALIGN(32);
-    } >RAM_D2
+.dma_buf (NOLOAD) :
+{
+  . = ALIGN(32);
+  *(.dma_buf)
+  *(.dma_buf*)
+  . = ALIGN(32);
+} >RAM_D2A
      /* Modification start */
-      .lwip_sec (NOLOAD) :
-      {
-        . = ABSOLUTE(0x30040000);
-        *(.RxDecripSection)
+     .RxDecripSection (NOLOAD) :
+     {
+       . = ALIGN(32);
+       *(.RxDecripSection)
+       . = ALIGN(32);
+     } >ETHRAM
 
-        . = ABSOLUTE(0x30040060);
-        *(.TxDecripSection)
+     .TxDecripSection (NOLOAD) :
+     {
+       . = ALIGN(32);
+       *(.TxDecripSection)
+       . = ALIGN(32);
+     } >ETHRAM
 
-        . = ABSOLUTE(0x30040200);
-        *(.Rx_PoolSection)
-      } >RAM_D2
+     .Rx_PoolSection (NOLOAD) :
+     {
+       . = ALIGN(32);
+       *(.Rx_PoolSection)
+       . = ALIGN(32);
+     } >ETHRAM
       /* Modification end */
   /* The startup code goes first into FLASH */
   .isr_vector :

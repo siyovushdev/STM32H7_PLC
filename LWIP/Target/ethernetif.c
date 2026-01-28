@@ -33,6 +33,24 @@
 
 /* Within 'USER CODE' section, code will be kept by default at each generation */
 /* USER CODE BEGIN 0 */
+#define DCACHE_LINE_SIZE 32U
+static inline void dcache_clean_by_addr(void *addr, uint32_t len)
+{
+  uintptr_t start = (uintptr_t)addr & ~(uintptr_t)(DCACHE_LINE_SIZE - 1U);
+  uintptr_t end   = ((uintptr_t)addr + len + (DCACHE_LINE_SIZE - 1U)) & ~(uintptr_t)(DCACHE_LINE_SIZE - 1U);
+  if (end > start) {
+    SCB_CleanDCache_by_Addr((uint32_t *)start, (int32_t)(end - start));
+  }
+}
+
+static inline void dcache_invalidate_by_addr(void *addr, uint32_t len)
+{
+  uintptr_t start = (uintptr_t)addr & ~(uintptr_t)(DCACHE_LINE_SIZE - 1U);
+  uintptr_t end   = ((uintptr_t)addr + len + (DCACHE_LINE_SIZE - 1U)) & ~(uintptr_t)(DCACHE_LINE_SIZE - 1U);
+  if (end > start) {
+    SCB_InvalidateDCache_by_Addr((uint32_t *)start, (int32_t)(end - start));
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -43,7 +61,7 @@
 #define ETHIF_TX_TIMEOUT (2000U)
 /* USER CODE BEGIN OS_THREAD_STACK_SIZE_WITH_RTOS */
 /* Stack size of the interface thread */
-#define INTERFACE_THREAD_STACK_SIZE ( 350 )
+//#define INTERFACE_THREAD_STACK_SIZE ( 350 )
 /* USER CODE END OS_THREAD_STACK_SIZE_WITH_RTOS */
 /* Network interface name */
 #define IFNAME0 's'
@@ -269,8 +287,8 @@ static void low_level_init(struct netif *netif)
 /* USER CODE BEGIN OS_THREAD_NEW_CMSIS_RTOS_V2 */
   memset(&attributes, 0x0, sizeof(osThreadAttr_t));
   attributes.name = "EthIf";
-  attributes.stack_size = INTERFACE_THREAD_STACK_SIZE;
-  attributes.priority = osPriorityRealtime;
+  attributes.stack_size = 8192;
+  attributes.priority = osPriorityAboveNormal;
   osThreadNew(ethernetif_input, netif, &attributes);
 /* USER CODE END OS_THREAD_NEW_CMSIS_RTOS_V2 */
 
@@ -327,6 +345,9 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
 
     Txbuffer[i].buffer = q->payload;
     Txbuffer[i].len = q->len;
+
+    // CLEAN TX PAYLOAD for DMA read (zero-copy)
+    dcache_clean_by_addr(q->payload, q->len);
 
     if(i>0)
     {
@@ -852,7 +873,7 @@ void HAL_ETH_RxLinkCallback(void **pStart, void **pEnd, uint8_t *buff, uint16_t 
   }
 
   /* Invalidate data cache because Rx DMA's writing to physical memory makes it stale. */
-  SCB_InvalidateDCache_by_Addr((uint32_t *)buff, Length);
+  dcache_invalidate_by_addr(buff, Length);
 
 /* USER CODE END HAL ETH RxLinkCallback */
 }

@@ -60,29 +60,7 @@ UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
 DMA_HandleTypeDef hdma_usart3_tx;
 
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for plc_scan_task */
-osThreadId_t plc_scan_taskHandle;
-const osThreadAttr_t plc_scan_task_attributes = {
-  .name = "plc_scan_task",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityRealtime,
-};
-/* Definitions for modbus_tcp_task */
-osThreadId_t modbus_tcp_taskHandle;
-const osThreadAttr_t modbus_tcp_task_attributes = {
-  .name = "modbus_tcp_task",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
-};
 /* USER CODE BEGIN PV */
-#define ADC_CH_COUNT 4
 
 // Лучше в D2 SRAM, если используешь D-Cache:
 // GCC атрибут зависит от линкера, но минимум выровнять:
@@ -90,7 +68,7 @@ const osThreadAttr_t modbus_tcp_task_attributes = {
 #define DMA_ALIGN 32
 
 __attribute__((section(".dma_buf"), aligned(32)))
-volatile uint32_t g_adcRaw[4];
+volatile uint32_t g_adcRaw[ADC_CH_COUNT];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -259,7 +237,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+//  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
 //  /* creation of plc_scan_task */
 //  plc_scan_taskHandle = osThreadNew(PlcScanTask, NULL, &plc_scan_task_attributes);
@@ -490,14 +468,14 @@ static void MX_IWDG1_Init(void)
   /* USER CODE BEGIN IWDG1_Init 1 */
 
   /* USER CODE END IWDG1_Init 1 */
-//  hiwdg1.Instance = IWDG1;
-//  hiwdg1.Init.Prescaler = IWDG_PRESCALER_64;
-//  hiwdg1.Init.Window = 4095;
-//  hiwdg1.Init.Reload = 4095;
-//  if (HAL_IWDG_Init(&hiwdg1) != HAL_OK)
-//  {
-//    Error_Handler();
-//  }
+  hiwdg1.Instance = IWDG1;
+  hiwdg1.Init.Prescaler = IWDG_PRESCALER_64;
+  hiwdg1.Init.Window = 4095;
+  hiwdg1.Init.Reload = 4095;
+  if (HAL_IWDG_Init(&hiwdg1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN IWDG1_Init 2 */
 
   /* USER CODE END IWDG1_Init 2 */
@@ -913,12 +891,21 @@ void ModbusTCPTask(void *argument)
 
    /** Initializes and configures the Region and the memory to be protected
    */
-   MPU_InitStruct.Number = MPU_REGION_NUMBER2;
-   MPU_InitStruct.BaseAddress = 0x30040000;
-   MPU_InitStruct.Size = MPU_REGION_SIZE_512B;
-   MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-   MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-   MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
+// Region2: ETHRAM (descs + Rx pool) = Normal, non-cacheable, shareable
+   memset(&MPU_InitStruct, 0, sizeof(MPU_InitStruct));
+   MPU_InitStruct.Enable           = MPU_REGION_ENABLE;
+   MPU_InitStruct.Number           = MPU_REGION_NUMBER2;
+   MPU_InitStruct.BaseAddress      = 0x30040000;
+   MPU_InitStruct.Size             = MPU_REGION_SIZE_32KB;
+   MPU_InitStruct.SubRegionDisable = 0x00;
+
+   MPU_InitStruct.TypeExtField     = MPU_TEX_LEVEL1;              // Normal memory
+   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+   MPU_InitStruct.DisableExec      = MPU_INSTRUCTION_ACCESS_DISABLE;
+
+   MPU_InitStruct.IsShareable      = MPU_ACCESS_SHAREABLE;
+   MPU_InitStruct.IsCacheable      = MPU_ACCESS_NOT_CACHEABLE;
+   MPU_InitStruct.IsBufferable     = MPU_ACCESS_NOT_BUFFERABLE;
 
    HAL_MPU_ConfigRegion(&MPU_InitStruct);
 

@@ -10,7 +10,7 @@ extern "C" {
 #define DMA_ALIGN 32
 // Лучше в D2 SRAM, если используешь D-Cache:
 // GCC атрибут зависит от линкера, но минимум выровнять:
-extern volatile uint32_t g_adcRaw[4];
+extern volatile uint32_t g_adcRaw[ADC_CH_COUNT];
 
 /* ================== Константы и типы ================== */
 #define PLC_MAX_NODES 100          // подбери под свою память

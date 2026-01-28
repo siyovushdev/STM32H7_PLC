@@ -119,7 +119,7 @@ extern "C" {
 
 /*-----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
-
+#define INTERFACE_THREAD_STACK_SIZE   8192
 /* USER CODE END 1 */
 
 #ifdef __cplusplus

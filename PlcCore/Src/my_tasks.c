@@ -142,14 +142,14 @@ static void TaskDiag(void *arg) {
     (void) arg;
 
     for (;;) {
-//        MemReport_Print();
-//        printf("[HWM] PLC=%lu COMMS=%lu UART=%lu INIT=%lu heap=%lu min=%lu\r\n",
-//               (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
-//               (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
-//               (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
-//               (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t),
-//               (unsigned long)xPortGetFreeHeapSize(),
-//               (unsigned long)xPortGetMinimumEverFreeHeapSize());
+        MemReport_Print();
+        printf("[HWM] PLC=%lu COMMS=%lu UART=%lu INIT=%lu heap=%lu min=%lu\r\n",
+               (unsigned long)uxTaskGetStackHighWaterMark(hPlc)    * sizeof(StackType_t),
+               (unsigned long)uxTaskGetStackHighWaterMark(hComms)  * sizeof(StackType_t),
+               (unsigned long)uxTaskGetStackHighWaterMark(hUartTx) * sizeof(StackType_t),
+               (unsigned long)uxTaskGetStackHighWaterMark(hInit)   * sizeof(StackType_t),
+               (unsigned long)xPortGetFreeHeapSize(),
+               (unsigned long)xPortGetMinimumEverFreeHeapSize());
 
         osDelay(10000);
     }
@@ -277,7 +277,7 @@ void TaskPlcScan(void *arg) {
     (void) arg;
     plc_log_init();
 
-    osDelay(10000);
+//    osDelay(10000);
     plc_log_put(PLC_EVT_LOG_VALUE, 100, (int16_t)(now_ms() & 0x7FFF));
     plc_log_put(PLC_EVT_LOG_VALUE, 101, (int16_t)(HAL_GetTick() & 0x7FFF));
     plc_log_put(PLC_EVT_LOG_VALUE, 102, (int16_t)(xTaskGetTickCount() & 0x7FFF));
@@ -373,8 +373,8 @@ void TaskPlcScan(void *arg) {
         // SAFE-POINT: deferred load_active (flash operations outside PumpApply)
         // =====================================================================
         if (g_needLoadActive) {
+            iwdg_feed();
             g_needLoadActive = false;
-
             // Реальная загрузка + подготовка staging + запрос активации
             // (plc_persist_load внутри уже делает upload->staging + plc_request_activate_graph)
             bool ok = plc_persist_load();
@@ -486,7 +486,7 @@ void TaskPlcScan(void *arg) {
             lastLogTick = endTick;
             const uint32_t heapFree = (uint32_t) xPortGetFreeHeapSize();
             const uint32_t heapMin = (uint32_t) xPortGetMinimumEverFreeHeapSize();
-//            prof_log_and_reset(periodMs, heapFree, heapMin);
+            prof_log_and_reset(periodMs, heapFree, heapMin);
         }
 
         osDelayUntil(nextTick); // ожидает ticks
@@ -565,7 +565,7 @@ void init_rtos(void) {
     const osThreadAttr_t plcAttr = {
             .name = "PLC",
             .stack_size = 8192,
-            .priority = osPriorityHigh
+            .priority = osPriorityRealtime
     };
 
 //    const osThreadAttr_t commsAttr = {
@@ -588,7 +588,7 @@ void init_rtos(void) {
 
     const osThreadAttr_t diagAttr = {
             .name = "Diag",
-            .stack_size = 1028,
+            .stack_size = 2048,
             .priority = osPriorityLow
     };
 

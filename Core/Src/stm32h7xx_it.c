@@ -87,22 +87,33 @@ void NMI_Handler(void)
 }
 
 
-volatile uint32_t hf_pc, hf_lr, hf_psr, hf_cfsr, hf_hfsr, hf_bfar, hf_mmfar;
+__attribute__((section(".noinit"))) volatile uint32_t hf_pc, hf_lr, hf_psr;
+__attribute__((section(".noinit"))) volatile uint32_t hf_cfsr, hf_hfsr, hf_bfar, hf_mmfar;
+__attribute__((section(".noinit"))) volatile uint32_t hf_msp, hf_psp;
+__attribute__((section(".noinit"))) volatile uint32_t hf_r0, hf_r1, hf_r2, hf_r3, hf_r12;
 
 __attribute__((used, noinline)) void fault_capture(uint32_t *sp)
 {
-    hf_lr   = sp[5];
-    hf_pc   = sp[6];
-    hf_psr  = sp[7];
+    hf_r0  = sp[0];
+    hf_r1  = sp[1];
+    hf_r2  = sp[2];
+    hf_r3  = sp[3];
+    hf_r12 = sp[4];
+    hf_lr  = sp[5];
+    hf_pc  = sp[6];
+    hf_psr = sp[7];
 
-    hf_cfsr = SCB->CFSR;
-    hf_hfsr = SCB->HFSR;
-    hf_bfar = SCB->BFAR;
-    hf_mmfar= SCB->MMFAR;
+    hf_cfsr  = SCB->CFSR;
+    hf_hfsr  = SCB->HFSR;
+    hf_bfar  = SCB->BFAR;
+    hf_mmfar = SCB->MMFAR;
 
-    __asm volatile("bkpt 0");
-    while(1){ __asm volatile("nop"); }
+    hf_msp = __get_MSP();
+    hf_psp = __get_PSP();
+
+    while (1) { __NOP(); }
 }
+
 
 __attribute__((naked)) void HardFault_Handler(void)
 {
