@@ -61,8 +61,6 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define DO2_Pin GPIO_PIN_2
 #define DO2_GPIO_Port GPIOE
-#define DO3_Pin GPIO_PIN_3
-#define DO3_GPIO_Port GPIOE
 #define DO4_Pin GPIO_PIN_4
 #define DO4_GPIO_Port GPIOE
 #define DO5_Pin GPIO_PIN_5
@@ -98,8 +96,6 @@ void Error_Handler(void);
 #define DI3_GPIO_Port GPIOD
 #define DI4_Pin GPIO_PIN_4
 #define DI4_GPIO_Port GPIOD
-#define DI5_Pin GPIO_PIN_5
-#define DI5_GPIO_Port GPIOD
 #define DI6_Pin GPIO_PIN_6
 #define DI6_GPIO_Port GPIOD
 #define DI7_Pin GPIO_PIN_7

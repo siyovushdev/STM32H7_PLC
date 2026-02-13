@@ -58,6 +58,7 @@ void DMA1_Stream3_IRQHandler(void);
 void EXTI9_5_IRQHandler(void);
 void SPI1_IRQHandler(void);
 void USART3_IRQHandler(void);
+void TIM5_IRQHandler(void);
 void TIM7_IRQHandler(void);
 void ETH_IRQHandler(void);
 void ETH_WKUP_IRQHandler(void);
