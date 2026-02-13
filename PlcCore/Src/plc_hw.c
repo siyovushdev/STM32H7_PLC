@@ -60,12 +60,12 @@ typedef struct {
 static const HwDiscreteInMap hw_di[] = {
         { GPIOD, GPIO_PIN_0, false },  // DI0
         { GPIOD, GPIO_PIN_1, false },  // DI1
-        { GPIOD, GPIO_PIN_3, false },  // DI2
-        { GPIOD, GPIO_PIN_5, false },  // DI3
-        { GPIOD, GPIO_PIN_7, false },  // DI4
-        { GPIOD, GPIO_PIN_8, false },  // DI5
-        { GPIOG, GPIO_PIN_0, false },  // DI6
-        { GPIOG, GPIO_PIN_1, false },  // DI7
+        { GPIOD, GPIO_PIN_2, false },  // DI2
+        { GPIOD, GPIO_PIN_3, false },  // DI3
+        { GPIOD, GPIO_PIN_4, false },  // DI4
+        { GPIOD, GPIO_PIN_5, false },  // DI5
+        { GPIOD, GPIO_PIN_6, false },  // DI6
+        { GPIOD, GPIO_PIN_7, false },  // DI7
 };
 
 /* DO0..DO7 */
@@ -89,10 +89,10 @@ static const HwAnalogInMap hw_ai[] = {
         { 1, 1.0f }, // AI1 -> g_adcRaw[1]
         { 2, 1.0f }, // AI2 -> g_adcRaw[2]
         { 3, 1.0f }, // AI3 -> g_adcRaw[3]
-        { 4, 1.0f }, // AI4 -> g_adcRaw[4]
-        { 5, 1.0f }, // AI5 -> g_adcRaw[5]
-        { 6, 1.0f }, // AI6 -> g_adcRaw[6]
-        { 7, 1.0f }, // AI7 -> g_adcRaw[7]
+//        { 4, 1.0f }, // AI4 -> g_adcRaw[4]
+//        { 5, 1.0f }, // AI5 -> g_adcRaw[5]
+//        { 6, 1.0f }, // AI6 -> g_adcRaw[6]
+//        { 7, 1.0f }, // AI7 -> g_adcRaw[7]
 };
 
 /* PWM mapping example (8 каналов):
@@ -102,14 +102,10 @@ static const HwAnalogInMap hw_ai[] = {
  * Если PWM пока не нужен — сделай hw_pwm[] пустым и hw_pwm_count=0.
  */
 static const HwPwmOutMap hw_pwm[] = {
-        { &htim3, TIM_CHANNEL_1 }, // PWM0
-        { &htim3, TIM_CHANNEL_2 }, // PWM1
-        { &htim3, TIM_CHANNEL_3 }, // PWM2
-        { &htim3, TIM_CHANNEL_4 }, // PWM3
-        { &htim1, TIM_CHANNEL_1 }, // PWM4
-        { &htim1, TIM_CHANNEL_2 }, // PWM5
-        { &htim1, TIM_CHANNEL_3 }, // PWM6
-        { &htim1, TIM_CHANNEL_4 }, // PWM7
+        { &htim1, TIM_CHANNEL_1 }, // PWM0
+        { &htim1, TIM_CHANNEL_2 }, // PWM1
+        { &htim1, TIM_CHANNEL_3 }, // PWM2
+        { &htim1, TIM_CHANNEL_4 }, // PWM3
 };
 
 /* Sizes */

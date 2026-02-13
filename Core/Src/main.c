@@ -53,7 +53,6 @@ DMA_HandleTypeDef hdma_adc1;
 IWDG_HandleTypeDef hiwdg1;
 
 TIM_HandleTypeDef htim1;
-TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart3;
@@ -81,7 +80,6 @@ static void MX_ADC1_Init(void);
 static void MX_IWDG1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_TIM3_Init(void);
 static void MX_USART3_UART_Init(void);
 void StartDefaultTask(void *argument);
 void PlcScanTask(void *argument);
@@ -123,7 +121,7 @@ int main(void)
 
   /* USER CODE END 1 */
 
-//  /* MPU Configuration--------------------------------------------------------*/
+  /* MPU Configuration--------------------------------------------------------*/
   MPU_Config();
 
   /* Enable the CPU Cache */
@@ -160,7 +158,6 @@ int main(void)
   MX_IWDG1_Init();
   MX_TIM6_Init();
   MX_TIM1_Init();
-  MX_TIM3_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
@@ -179,24 +176,17 @@ int main(void)
 
   // Включить главный выход TIM1
   __HAL_TIM_MOE_ENABLE(&htim1);
-  __HAL_TIM_MOE_ENABLE(&htim3);
   // PWM0 -> TIM1_CH1
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-  // PWM3 -> TIM1_CH2 (если используешь)
+  // PWM1 -> TIM1_CH2
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 
-  // PWM0 -> TIM1_CH3
+  // PWM2 -> TIM1_CH3
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
 
-  // PWM3 -> TIM1_CH4 (если используешь)
+  // PWM3 -> TIM1_CH4
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
-
-  // PWM1 -> TIM4_CH1
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-
-  // PWM2 -> TIM4_CH2
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 
   uint8_t b = 0;
 
@@ -494,6 +484,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 0 */
 
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
@@ -508,6 +499,15 @@ static void MX_TIM1_Init(void)
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
@@ -561,59 +561,6 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
-
-}
-
-/**
-  * @brief TIM3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM3_Init(void)
-{
-
-  /* USER CODE BEGIN TIM3_Init 0 */
-
-  /* USER CODE END TIM3_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-
-  /* USER CODE BEGIN TIM3_Init 1 */
-
-  /* USER CODE END TIM3_Init 1 */
-  htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 0;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 65535;
-  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM3_Init 2 */
-
-  /* USER CODE END TIM3_Init 2 */
-  HAL_TIM_MspPostInit(&htim3);
 
 }
 
@@ -758,16 +705,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : DI7_Pin DI0_Pin DI1_Pin DI2_Pin
-                           DI4_Pin DI5_Pin DI6_Pin */
-  GPIO_InitStruct.Pin = DI7_Pin|DI0_Pin|DI1_Pin|DI2_Pin
-                          |DI4_Pin|DI5_Pin|DI6_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PD4 */
-  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  /*Configure GPIO pins : DI0_Pin DI1_Pin DI2_Pin DI3_Pin
+                           DI4_Pin DI5_Pin DI6_Pin DI7_Pin */
+  GPIO_InitStruct.Pin = DI0_Pin|DI1_Pin|DI2_Pin|DI3_Pin
+                          |DI4_Pin|DI5_Pin|DI6_Pin|DI7_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
@@ -849,10 +790,6 @@ void ModbusTCPTask(void *argument)
 }
 
  /* MPU Configuration */
-// void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
-// {
-//   SCB_InvalidateDCache_by_Addr((uint32_t*)g_adcRaw, sizeof(g_adcRaw));
-// }
 
  void MPU_Config(void)
  {

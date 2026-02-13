@@ -20,7 +20,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32h7xx_it.h"
-#include "usb_log.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -86,45 +85,21 @@ void NMI_Handler(void)
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
-
-__attribute__((section(".noinit"))) volatile uint32_t hf_pc, hf_lr, hf_psr;
-__attribute__((section(".noinit"))) volatile uint32_t hf_cfsr, hf_hfsr, hf_bfar, hf_mmfar;
-__attribute__((section(".noinit"))) volatile uint32_t hf_msp, hf_psp;
-__attribute__((section(".noinit"))) volatile uint32_t hf_r0, hf_r1, hf_r2, hf_r3, hf_r12;
-
-__attribute__((used, noinline)) void fault_capture(uint32_t *sp)
+/**
+  * @brief This function handles Hard fault interrupt.
+  */
+void HardFault_Handler(void)
 {
-    hf_r0  = sp[0];
-    hf_r1  = sp[1];
-    hf_r2  = sp[2];
-    hf_r3  = sp[3];
-    hf_r12 = sp[4];
-    hf_lr  = sp[5];
-    hf_pc  = sp[6];
-    hf_psr = sp[7];
+  /* USER CODE BEGIN HardFault_IRQn 0 */
 
-    hf_cfsr  = SCB->CFSR;
-    hf_hfsr  = SCB->HFSR;
-    hf_bfar  = SCB->BFAR;
-    hf_mmfar = SCB->MMFAR;
-
-    hf_msp = __get_MSP();
-    hf_psp = __get_PSP();
-
-    while (1) { __NOP(); }
+  /* USER CODE END HardFault_IRQn 0 */
+  while (1)
+  {
+    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
+    /* USER CODE END W1_HardFault_IRQn 0 */
+  }
 }
 
-
-__attribute__((naked)) void HardFault_Handler(void)
-{
-    __asm volatile(
-            "tst lr, #4        \n"
-            "ite eq            \n"
-            "mrseq r0, msp     \n"
-            "mrsne r0, psp     \n"
-            "b fault_capture   \n"
-            );
-}
 /**
   * @brief This function handles Memory management fault.
   */
